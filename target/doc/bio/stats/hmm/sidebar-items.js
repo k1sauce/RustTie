@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["backward","baum_welch","forward","viterbi"],"mod":["discrete_emission","discrete_emission_opt_end","errors","univariate_continuous_emission"],"struct":["State","StateIter","StateTransition","StateTransitionIter"],"trait":["Model","Trainable"]};

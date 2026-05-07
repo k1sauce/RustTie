@@ -1,0 +1,14 @@
+/Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/release/deps/thiserror-a1f469caf8538ec7.d: /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/release/build/thiserror-3c6ec49085ce80c9/out/private.rs
+
+/Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/release/deps/libthiserror-a1f469caf8538ec7.rlib: /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/release/build/thiserror-3c6ec49085ce80c9/out/private.rs
+
+/Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/release/deps/libthiserror-a1f469caf8538ec7.rmeta: /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs /Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs /Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/release/build/thiserror-3c6ec49085ce80c9/out/private.rs
+
+/Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/lib.rs:
+/Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/aserror.rs:
+/Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/display.rs:
+/Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/var.rs:
+/Users/kyle/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/thiserror-2.0.18/src/private.rs:
+/Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/release/build/thiserror-3c6ec49085ce80c9/out/private.rs:
+
+# env-dep:OUT_DIR=/Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/release/build/thiserror-3c6ec49085ce80c9/out

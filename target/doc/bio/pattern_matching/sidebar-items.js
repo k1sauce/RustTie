@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["bndm","bom","horspool","kmp","myers","pssm","shift_and","ukkonen"]};

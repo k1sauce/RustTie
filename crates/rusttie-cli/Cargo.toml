@@ -1,0 +1,33 @@
+[package]
+name = "rusttie-cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+description = "RustTie CLI: a Rust port of Bowtie 2 (alpha). Provides the `rusttie` and `rusttie-build` binaries."
+
+# Integration tests reference fixtures + bowtie2 outside the package dir,
+# so they can't run from a downloaded crates.io tarball. Skip packaging.
+exclude = ["tests/**"]
+
+[[bin]]
+name = "rusttie"
+path = "src/bin/rusttie.rs"
+
+[[bin]]
+name = "rusttie-build"
+path = "src/bin/rusttie-build.rs"
+
+[dependencies]
+rusttie-index.workspace = true
+rusttie-align.workspace = true
+rusttie-io.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+rayon.workspace = true

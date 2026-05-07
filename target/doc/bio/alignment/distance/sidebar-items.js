@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["hamming","levenshtein"],"mod":["simd"]};

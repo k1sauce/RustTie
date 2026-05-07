@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["FenwickTree","MaxOp","SumOp"],"trait":["PrefixOp"],"type":["MaxBitTree","SumBitTree"]};

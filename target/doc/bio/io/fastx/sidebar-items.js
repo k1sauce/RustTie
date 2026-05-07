@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["EitherRecord","Error","Kind"],"fn":["get_kind","get_kind_detailed","get_kind_file","get_kind_seek"],"struct":["EitherRecords"],"trait":["Record","Records"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["annot_map","bit_tree","bitenc","bwt","fmindex","interpolation_table","interval_tree","qgram_index","rank_select","smallints","suffix_array","wavelet_matrix"]};

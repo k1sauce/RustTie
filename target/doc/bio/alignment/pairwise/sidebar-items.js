@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MIN_SCORE"],"mod":["banded"],"struct":["Aligner","MatchParams","Scoring","TracebackCell"],"trait":["MatchFunc"]};

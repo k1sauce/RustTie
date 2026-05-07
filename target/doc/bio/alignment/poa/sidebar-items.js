@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["MIN_SCORE"],"enum":["AlignmentOperation"],"struct":["Aligner","Alignment","Poa","Traceback"],"type":["POAGraph"]};

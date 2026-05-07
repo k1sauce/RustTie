@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"constant":["DEF_PSEUDO","EPSILON","INVALID_MONO"],"mod":["errors"],"struct":["DNAMotif","ProtMotif","ScoredPos"],"trait":["Motif"]};

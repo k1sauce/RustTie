@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["XYEmission"],"struct":["HomopolyPairHMM","PairHMM"],"trait":["BaseSpecificHopParameters","Emission","EmissionParameters","GapParameters","HopParameters","StartEndGapParameters"]};

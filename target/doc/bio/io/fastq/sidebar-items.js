@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["Error"],"struct":["Reader","Record","Records","Writer"],"trait":["FastqRead"],"type":["Result"]};

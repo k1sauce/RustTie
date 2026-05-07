@@ -1,0 +1,25 @@
+[package]
+name = "rusttie-index"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+description = "Bowtie 2 .bt2 index reader / builder + FM-index search for RustTie."
+
+# Integration tests reference fixtures outside the package directory.
+exclude = ["tests/**"]
+
+[dependencies]
+bio.workspace = true
+byteorder.workspace = true
+memmap2.workspace = true
+noodles-fasta.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+sais-rs.workspace = true

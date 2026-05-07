@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["alignment","alphabets","data_structures","io","pattern_matching","scores","seq_analysis","stats","utils"]};

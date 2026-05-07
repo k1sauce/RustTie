@@ -1,0 +1,9 @@
+/Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/debug/deps/rusttie-a805b635eded2817.d: crates/rusttie-cli/src/bin/rusttie.rs Cargo.toml
+
+/Users/kyle/Projects/kylehazen/26/26-05-04_RustTie/target/debug/deps/librusttie-a805b635eded2817.rmeta: crates/rusttie-cli/src/bin/rusttie.rs Cargo.toml
+
+crates/rusttie-cli/src/bin/rusttie.rs:
+Cargo.toml:
+
+# env-dep:CLIPPY_ARGS=-D__CLIPPY_HACKERY__warnings__CLIPPY_HACKERY__
+# env-dep:CLIPPY_CONF_DIR

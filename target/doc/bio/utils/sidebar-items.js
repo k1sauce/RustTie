@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["prescan","scan","trim_newline"],"struct":["Interval"],"trait":["FastExp"],"type":["Text","TextSlice"]};

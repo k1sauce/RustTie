@@ -1,0 +1,9 @@
+(function() {
+    const implementors = Object.fromEntries([["bio",[["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"enum\" href=\"bio/io/fastq/enum.Error.html\" title=\"enum bio::io::fastq::Error\">Error</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"enum\" href=\"bio/io/fastx/enum.Error.html\" title=\"enum bio::io::fastx::Error\">Error</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"enum\" href=\"bio/pattern_matching/pssm/errors/enum.Error.html\" title=\"enum bio::pattern_matching::pssm::errors::Error\">Error</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"enum\" href=\"bio/stats/hmm/errors/enum.Error.html\" title=\"enum bio::stats::hmm::errors::Error\">Error</a>",0],["impl <a class=\"trait\" href=\"https://doc.rust-lang.org/1.95.0/core/error/trait.Error.html\" title=\"trait core::error::Error\">Error</a> for <a class=\"enum\" href=\"bio/stats/probs/errors/enum.Error.html\" title=\"enum bio::stats::probs::errors::Error\">Error</a>",0]]]]);
+    if (window.register_implementors) {
+        window.register_implementors(implementors);
+    } else {
+        window.pending_implementors = implementors;
+    }
+})()
+//{"start":59,"fragment_lengths":[1348]}

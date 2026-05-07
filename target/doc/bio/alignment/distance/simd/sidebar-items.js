@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["bounded_levenshtein","hamming","levenshtein"]};

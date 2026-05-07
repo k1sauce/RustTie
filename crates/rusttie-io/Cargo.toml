@@ -1,0 +1,22 @@
+[package]
+name = "rusttie-io"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+description = "FASTQ/SAM/BAM I/O for RustTie, a Rust port of Bowtie 2."
+
+[dependencies]
+noodles-sam.workspace = true
+noodles-bam.workspace = true
+noodles-fasta.workspace = true
+noodles-fastq.workspace = true
+flate2.workspace = true
+anyhow.workspace = true
+rusttie-index.workspace = true

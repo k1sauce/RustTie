@@ -1,0 +1,53 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/rusttie-index",
+    "crates/rusttie-align",
+    "crates/rusttie-io",
+    "crates/rusttie-cli",
+]
+
+[workspace.package]
+version = "0.0.1"
+edition = "2024"
+authors = ["Kyle Hazen <kyle@union.ai>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/kylehazen/rusttie"
+homepage = "https://github.com/kylehazen/rusttie"
+readme = "README.md"
+keywords = ["bioinformatics", "alignment", "bowtie2", "sequencing", "fm-index"]
+categories = ["science", "command-line-utilities"]
+rust-version = "1.85"
+
+[workspace.dependencies]
+# bio I/O
+noodles-sam = "0.84"
+noodles-bam = "0.88"
+noodles-fasta = "0.60"
+noodles-fastq = "0.22"
+flate2 = "1.0"
+
+# bio algorithms
+bio = "3.0"
+sais-rs = "0.0.1"
+
+# binary parsing + mmap
+byteorder = "1.5"
+memmap2 = "0.9"
+
+# CLI + errors
+clap = { version = "4.5", features = ["derive"] }
+anyhow = "1"
+thiserror = "2"
+
+# parallelism
+rayon = "1.10"
+
+# internal
+rusttie-index = { path = "crates/rusttie-index" }
+rusttie-align = { path = "crates/rusttie-align" }
+rusttie-io = { path = "crates/rusttie-io" }
+
+[profile.release]
+lto = "fat"
+codegen-units = 1

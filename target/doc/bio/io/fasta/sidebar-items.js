@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Index","IndexedReader","IndexedReaderIterator","Reader","Record","Records","Sequence","Writer"],"trait":["FastaRead"]};

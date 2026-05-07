@@ -1,0 +1,49 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="The Full-text index in Minute space index (FM-index) and the FMD-Index for finding suffix array intervals matching a given pattern in linear time."><title>bio::data_structures::fmindex - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="bio" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="icon" href="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module fmindex</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../bio/index.html"><img src="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg" alt="logo"></a><h2><a href="../../../bio/index.html">bio</a><span class="version">3.0.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module fmindex</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#examples" title="Examples">Examples</a><ul><li><a href="#generate" title="Generate">Generate</a></li><li><a href="#enclose-in-struct" title="Enclose in struct">Enclose in struct</a></li></ul></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In bio::<wbr>data_<wbr>structures</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">bio</a>::<wbr><a href="../index.html">data_structures</a></div><h1>Module <span>fmindex</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/bio/data_structures/fmindex.rs.html#6-848">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>The <a href="https://doi.org/10.1109/SFCS.2000.892127">Full-text index in Minute space index (FM-index)</a> and
+the FMD-Index for finding suffix array intervals matching a given pattern in linear time.</p>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2><h3 id="generate"><a class="doc-anchor" href="#generate">§</a>Generate</h3>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::alphabets::dna;
+<span class="kw">use </span>bio::data_structures::bwt::{bwt, less, Occ};
+<span class="kw">use </span>bio::data_structures::fmindex::{FMIndex, FMIndexable};
+<span class="kw">use </span>bio::data_structures::suffix_array::suffix_array;
+
+<span class="kw">let </span>text = <span class="string">b"GCCTTAACATTATTACGCCTA$"</span>;
+<span class="kw">let </span>alphabet = dna::n_alphabet();
+<span class="kw">let </span>sa = suffix_array(text);
+<span class="kw">let </span>bwt = bwt(text, <span class="kw-2">&amp;</span>sa);
+<span class="kw">let </span>less = less(<span class="kw-2">&amp;</span>bwt, <span class="kw-2">&amp;</span>alphabet);
+<span class="kw">let </span>occ = Occ::new(<span class="kw-2">&amp;</span>bwt, <span class="number">3</span>, <span class="kw-2">&amp;</span>alphabet);
+<span class="kw">let </span>fm = FMIndex::new(<span class="kw-2">&amp;</span>bwt, <span class="kw-2">&amp;</span>less, <span class="kw-2">&amp;</span>occ);</code></pre></div><h3 id="enclose-in-struct"><a class="doc-anchor" href="#enclose-in-struct">§</a>Enclose in struct</h3>
+<p><code>FMIndex</code> was designed to not forcibly own the BWT and auxiliary data structures.
+It can take a reference (<code>&amp;</code>), owned structs or any of the more complex pointer types.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::alphabets::dna;
+<span class="kw">use </span>bio::data_structures::bwt::{bwt, less, Less, Occ, BWT};
+<span class="kw">use </span>bio::data_structures::fmindex::{FMIndex, FMIndexable};
+<span class="kw">use </span>bio::data_structures::suffix_array::suffix_array;
+<span class="kw">use </span>bio::utils::TextSlice;
+
+<span class="kw">pub struct </span>Example {
+    fmindex: FMIndex&lt;BWT, Less, Occ&gt;,
+}
+
+<span class="kw">impl </span>Example {
+    <span class="kw">pub fn </span>new(text: TextSlice) -&gt; <span class="self">Self </span>{
+        <span class="kw">let </span>alphabet = dna::n_alphabet();
+        <span class="kw">let </span>sa = suffix_array(text);
+        <span class="kw">let </span>bwt = bwt(text, <span class="kw-2">&amp;</span>sa);
+        <span class="kw">let </span>less = less(<span class="kw-2">&amp;</span>bwt, <span class="kw-2">&amp;</span>alphabet);
+        <span class="kw">let </span>occ = Occ::new(<span class="kw-2">&amp;</span>bwt, <span class="number">3</span>, <span class="kw-2">&amp;</span>alphabet);
+        <span class="kw">let </span>fm = FMIndex::new(bwt, less, occ);
+        Example { fmindex: fm }
+    }
+}</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.BiInterval.html" title="struct bio::data_structures::fmindex::BiInterval">BiInterval</a></dt><dd>A bi-interval on suffix array of the forward and reverse strand of a DNA text.</dd><dt><a class="struct" href="struct.FMDIndex.html" title="struct bio::data_structures::fmindex::FMDIndex">FMDIndex</a></dt><dd>The FMD-Index for linear time search of supermaximal exact matches on forward and reverse
+strand of DNA texts (Li, 2012).</dd><dt><a class="struct" href="struct.FMIndex.html" title="struct bio::data_structures::fmindex::FMIndex">FMIndex</a></dt><dd>The Fast Index in Minute space (FM-Index, Ferragina and Manzini, 2000) for finding suffix array
+intervals matching a given pattern.</dd><dt><a class="struct" href="struct.Interval.html" title="struct bio::data_structures::fmindex::Interval">Interval</a></dt><dd>A suffix array interval.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.BackwardSearchResult.html" title="enum bio::data_structures::fmindex::BackwardSearchResult">Backward<wbr>Search<wbr>Result</a></dt><dd>This enum represents the potential result states
+from a backward_search in the fm index.  The
+potential variants of the enum are:
+Complete(Interval) — the query matched completely. The interval is the
+range of suffix array indices matching the query string.
+Partial(Intarval, usize) - some suffix of the query matched, but not the whole query.
+The interval returned is the range of suffix array indices for the maximal
+matching suffix, and the <code>usize</code> is the length of the maximal matching suffix.
+Absent - None suffix of the pattern matched in the text.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.FMIndexable.html" title="trait bio::data_structures::fmindex::FMIndexable">FMIndexable</a></dt></dl></section></div></main></body></html>

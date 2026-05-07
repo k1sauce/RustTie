@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["expand_kmer_matches","find_kmer_matches","find_kmer_matches_seq1_hashed","find_kmer_matches_seq2_hashed","hash_kmers","lcskpp","sdpkpp","sdpkpp_union_lcskpp_path"],"struct":["SparseAlignmentResult"],"type":["HashMapFx"]};

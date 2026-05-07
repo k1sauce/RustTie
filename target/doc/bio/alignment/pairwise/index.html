@@ -1,0 +1,158 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Calculate alignments with a generalized variant of the Smith Waterman algorithm. Complexity: O(n * m) for strings of length m and n."><title>bio::alignment::pairwise - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="bio" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="icon" href="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module pairwise</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../bio/index.html"><img src="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg" alt="logo"></a><h2><a href="../../../bio/index.html">bio</a><span class="version">3.0.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module pairwise</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li></ul><h3><a href="#modules">Module Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#constants" title="Constants">Constants</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In bio::<wbr>alignment</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">bio</a>::<wbr><a href="../index.html">alignment</a></div><h1>Module <span>pairwise</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/bio/alignment/pairwise/mod.rs.html#6-1718">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Calculate alignments with a generalized variant of the Smith Waterman algorithm.
+Complexity: O(n * m) for strings of length m and n.</p>
+<p>For quick computation of alignments and alignment scores there are 6 simple functions.</p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::alignment::pairwise::<span class="kw-2">*</span>;
+<span class="kw">use </span>bio::alignment::AlignmentOperation::<span class="kw-2">*</span>;
+<span class="kw">use </span>bio::scores::blosum62;
+
+<span class="kw">let </span>x = <span class="string">b"ACCGTGGAT"</span>;
+<span class="kw">let </span>y = <span class="string">b"AAAAACCGTTGAT"</span>;
+<span class="kw">let </span>score = |a: u8, b: u8| <span class="kw">if </span>a == b { <span class="number">1i32 </span>} <span class="kw">else </span>{ -<span class="number">1i32 </span>};
+<span class="comment">// gap open score: -5, gap extension score: -1
+</span><span class="kw">let </span><span class="kw-2">mut </span>aligner = Aligner::with_capacity(x.len(), y.len(), -<span class="number">5</span>, -<span class="number">1</span>, <span class="kw-2">&amp;</span>score);
+<span class="kw">let </span>alignment = aligner.semiglobal(x, y);
+<span class="comment">// x is global (target sequence) and y is local (reference sequence)
+</span><span class="macro">assert_eq!</span>(alignment.ystart, <span class="number">4</span>);
+<span class="macro">assert_eq!</span>(alignment.xstart, <span class="number">0</span>);
+<span class="macro">assert_eq!</span>(
+    alignment.operations,
+    [Match, Match, Match, Match, Match, Subst, Match, Match, Match]
+);
+
+<span class="comment">// You can use predefined scoring matrices such as BLOSUM62
+</span><span class="kw">let </span>x = <span class="string">b"LSPADKTNVKAA"</span>;
+<span class="kw">let </span>y = <span class="string">b"PEEKSAV"</span>;
+<span class="comment">// gap open score: -10, gap extension score: -1
+</span><span class="kw">let </span><span class="kw-2">mut </span>aligner = Aligner::with_capacity(x.len(), y.len(), -<span class="number">10</span>, -<span class="number">1</span>, <span class="kw-2">&amp;</span>blosum62);
+<span class="kw">let </span>alignment = aligner.local(x, y);
+<span class="macro">assert_eq!</span>(alignment.xstart, <span class="number">2</span>);
+<span class="macro">assert_eq!</span>(alignment.xend, <span class="number">9</span>);
+<span class="macro">assert_eq!</span>(alignment.ystart, <span class="number">0</span>);
+<span class="macro">assert_eq!</span>(alignment.yend, <span class="number">7</span>);
+<span class="macro">assert_eq!</span>(
+    alignment.operations,
+    [Match, Subst, Subst, Match, Subst, Subst, Match]
+);
+<span class="macro">assert_eq!</span>(alignment.score, <span class="number">16</span>);
+
+<span class="comment">// If you don't know sizes of future sequences, you could
+// use Aligner::new().
+// Global alignment:
+</span><span class="kw">let </span><span class="kw-2">mut </span>aligner = Aligner::new(-<span class="number">5</span>, -<span class="number">1</span>, <span class="kw-2">&amp;</span>score);
+<span class="kw">let </span>x = <span class="string">b"ACCGTGGAT"</span>;
+<span class="kw">let </span>y = <span class="string">b"AAAAACCGTTGAT"</span>;
+<span class="kw">let </span>alignment = aligner.global(x, y);
+<span class="macro">assert_eq!</span>(alignment.ystart, <span class="number">0</span>);
+<span class="macro">assert_eq!</span>(alignment.xstart, <span class="number">0</span>);
+<span class="macro">assert_eq!</span>(aligner.local(x, y).score, <span class="number">7</span>);
+
+<span class="comment">// In addition to the standard modes (Global, Semiglobal and Local), a custom alignment
+// mode is supported which supports a user-specified clipping penalty. Clipping is a
+// special boundary condition where you are allowed to clip off the beginning/end of
+// the sequence for a fixed penalty. As a starting example, we can use the custom mode
+// for achieving the three standard modes as follows.
+
+// scoring for semiglobal mode
+</span><span class="kw">let </span>scoring = Scoring::new(-<span class="number">5</span>, -<span class="number">1</span>, <span class="kw-2">&amp;</span>score) <span class="comment">// Gap open, gap extend and match score function
+    </span>.xclip(MIN_SCORE) <span class="comment">// Clipping penalty for x set to 'negative infinity', hence global in x
+    </span>.yclip(<span class="number">0</span>); <span class="comment">// Clipping penalty for y set to 0, hence local in y
+</span><span class="kw">let </span><span class="kw-2">mut </span>aligner = Aligner::with_scoring(scoring);
+<span class="kw">let </span>alignment = aligner.custom(x, y); <span class="comment">// The custom aligner invocation
+</span><span class="macro">assert_eq!</span>(alignment.ystart, <span class="number">4</span>);
+<span class="macro">assert_eq!</span>(alignment.xstart, <span class="number">0</span>);
+<span class="comment">// Note that in the custom mode, the clips are explicitly mentioned in the operations
+</span><span class="macro">assert_eq!</span>(
+    alignment.operations,
+    [
+        Yclip(<span class="number">4</span>),
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Subst,
+        Match,
+        Match,
+        Match
+    ]
+);
+
+<span class="comment">// scoring for global mode
+// scoring can also be created using from_scores if the match and mismatch scores are constants
+</span><span class="kw">let </span>scoring = Scoring::from_scores(-<span class="number">5</span>, -<span class="number">1</span>, <span class="number">1</span>, -<span class="number">1</span>) <span class="comment">// Gap open, extend, match, mismatch score
+    </span>.xclip(MIN_SCORE) <span class="comment">// Clipping penalty for x set to 'negative infinity', hence global in x
+    </span>.yclip(MIN_SCORE); <span class="comment">// Clipping penalty for y set to 'negative infinity', hence global in y
+</span><span class="kw">let </span><span class="kw-2">mut </span>aligner = Aligner::with_scoring(scoring);
+<span class="kw">let </span>alignment = aligner.custom(x, y); <span class="comment">// The custom aligner invocation
+</span><span class="macro">assert_eq!</span>(alignment.ystart, <span class="number">0</span>);
+<span class="macro">assert_eq!</span>(alignment.xstart, <span class="number">0</span>);
+<span class="comment">// Note that in the custom mode, the clips are explicitly mentioned in the operations
+</span><span class="macro">assert_eq!</span>(
+    alignment.operations,
+    [Del, Del, Del, Del, Match, Match, Match, Match, Match, Subst, Match, Match, Match]
+);
+
+<span class="comment">// Similarly if the clip penalties are both set to 0, we have local alignment mode. The scoring
+// struct also lets users set different penalties for prefix/suffix clipping, thereby letting
+// users have the flexibility to create a wide variety of boundary conditions. The xclip() and
+// yclip() methods sets the prefix and suffix penalties to be equal. The scoring struct can be
+// explicitly constructed for full flexibility.
+
+// The following example considers a modification of the semiglobal mode where you are allowed
+// to skip a prefix of the target sequence x, for a penalty of -10, but you have to consume
+// the rest of the string in the alignment
+
+</span><span class="kw">let </span>scoring = Scoring {
+    gap_open: -<span class="number">5</span>,
+    gap_extend: -<span class="number">1</span>,
+    match_fn: |a: u8, b: u8| <span class="kw">if </span>a == b { <span class="number">1i32 </span>} <span class="kw">else </span>{ -<span class="number">3i32 </span>},
+    match_scores: <span class="prelude-val">Some</span>((<span class="number">1</span>, -<span class="number">3</span>)),
+    xclip_prefix: -<span class="number">10</span>,
+    xclip_suffix: MIN_SCORE,
+    yclip_prefix: <span class="number">0</span>,
+    yclip_suffix: <span class="number">0</span>,
+};
+<span class="kw">let </span>x = <span class="string">b"GGGGGGACGTACGTACGT"</span>;
+<span class="kw">let </span>y = <span class="string">b"AAAAACGTACGTACGTAAAA"</span>;
+<span class="kw">let </span><span class="kw-2">mut </span>aligner = Aligner::with_capacity_and_scoring(x.len(), y.len(), scoring);
+<span class="kw">let </span>alignment = aligner.custom(x, y);
+<span class="macro">println!</span>(<span class="string">"{}"</span>, alignment.pretty(x, y, <span class="number">80</span>));
+<span class="macro">assert_eq!</span>(alignment.score, <span class="number">2</span>);
+<span class="macro">assert_eq!</span>(
+    alignment.operations,
+    [
+        Yclip(<span class="number">4</span>),
+        Xclip(<span class="number">6</span>),
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Match,
+        Yclip(<span class="number">4</span>)
+    ]
+);</code></pre></div></div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="banded/index.html" title="mod bio::alignment::pairwise::banded">banded</a></dt><dd>Banded Smith-Waterman alignment for fast comparison of long strings.
+Use sparse dynamic programming to find a ‘backbone’ alignment from exact
+k-mer matches, then compute the SW alignment in a ‘band’ surrounding the
+backbone, with a configurable width w. This method is not guaranteed
+to recover the Smith-Waterman alignment, but will usually find the same
+alignment if a) there is a reasonable density of exact k-mer matches
+between the sequences, and b) the width parameter w is larger than the
+excursion of the alignment path from diagonal between successive kmer
+matches.  This technique is employed in long-read aligners (e.g. BLASR and BWA)
+to drastically reduce runtime compared to Smith Waterman.
+Complexity roughly O(min(m,n) * w)</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.Aligner.html" title="struct bio::alignment::pairwise::Aligner">Aligner</a></dt><dd>A generalized Smith-Waterman aligner.</dd><dt><a class="struct" href="struct.MatchParams.html" title="struct bio::alignment::pairwise::MatchParams">Match<wbr>Params</a></dt><dd>A concrete data structure which implements trait MatchFunc with constant
+match and mismatch scores</dd><dt><a class="struct" href="struct.Scoring.html" title="struct bio::alignment::pairwise::Scoring">Scoring</a></dt><dd>Details of scoring are encapsulated in this structure.</dd><dt><a class="struct" href="struct.TracebackCell.html" title="struct bio::alignment::pairwise::TracebackCell">Traceback<wbr>Cell</a></dt><dd>Packed representation of one cell of a Smith-Waterman traceback matrix.
+Stores the I, D and S traceback matrix values in two bytes.
+Possible traceback moves include : start, insert, delete, match, substitute,
+prefix clip and suffix clip for x &amp; y. So we need 4 bits each for matrices I, D, S
+to keep track of these 9 moves.</dd></dl><h2 id="constants" class="section-header">Constants<a href="#constants" class="anchor">§</a></h2><dl class="item-table"><dt><a class="constant" href="constant.MIN_SCORE.html" title="constant bio::alignment::pairwise::MIN_SCORE">MIN_<wbr>SCORE</a></dt><dd>Value to use as a ‘negative infinity’ score. Should be close to <code>i32::MIN</code>,
+but avoid underflow when used with reasonable scoring parameters or even
+adding two negative infinities. Use ~ <code>0.4 * i32::MIN</code></dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.MatchFunc.html" title="trait bio::alignment::pairwise::MatchFunc">Match<wbr>Func</a></dt><dd>Trait required to instantiate a Scoring instance</dd></dl></section></div></main></body></html>

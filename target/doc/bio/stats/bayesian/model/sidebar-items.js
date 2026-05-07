@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"struct":["Model","ModelInstance"],"trait":["Likelihood","Marginal","Posterior","Prior"],"type":["JointProbUniverse"]};

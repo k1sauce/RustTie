@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["gc3_content","gc_content"]};

@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["alphabet","complement","iupac_alphabet","n_alphabet","revcomp"]};

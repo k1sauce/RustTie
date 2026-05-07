@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["blosum30","blosum45","blosum62","pam120","pam200","pam250","pam40"]};

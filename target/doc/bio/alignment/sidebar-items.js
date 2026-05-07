@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["AlignmentMode","AlignmentOperation"],"mod":["distance","pairwise","poa","sparse"],"struct":["Alignment"],"type":["TextSlice"]};

@@ -1,0 +1,139 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Traits and utilities to read and write files in the FASTA and FASTQ format interchangably"><title>bio::io::fastx - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="bio" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="icon" href="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module fastx</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../bio/index.html"><img src="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg" alt="logo"></a><h2><a href="../../../bio/index.html">bio</a><span class="version">3.0.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module fastx</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#generic-implementation-examples" title="Generic Implementation Examples">Generic Implementation Examples</a><ul><li><a href="#common-statistics" title="Common Statistics">Common Statistics</a></li><li><a href="#filtration" title="Filtration">Filtration</a></li></ul></li><li><a href="#dynamic-type-examples" title="Dynamic Type Examples">Dynamic Type Examples</a><ul><li><a href="#parsing-data-of-either-the-fasta-of-fastq-type" title="Parsing data of either the FASTA of FASTQ type">Parsing data of either the FASTA of FASTQ type</a></li></ul></li><li><a href="#utility-examples" title="Utility Examples">Utility Examples</a><ul><li><a href="#type-detection" title="Type Detection">Type Detection</a></li></ul></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li><li><a href="#functions" title="Functions">Functions</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In bio::io</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">bio</a>::<wbr><a href="../index.html">io</a></div><h1>Module <span>fastx</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/bio/io/fastx.rs.html#6-882">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Traits and utilities to read and write files in the FASTA and FASTQ format interchangably</p>
+<p>Files in the FASTA and FASTQ format have several common fields: ID, Sequence, and Description.
+These utilities can be used to implement algorithms that only require these fields for files
+that are in either format.</p>
+<p>This module serves two use cases:</p>
+<ol>
+<li>Implementing functions that can be used generically with FASTA/FASTQ records. In this use
+case the type may be known at compile time by the caller of your function.</li>
+<li>Processing data that may be either in the FASTA/FASTQ format. In this use case the type
+cannot be known at compile time and you may or may not want to treat FASTA/FASTQ data
+differently.</li>
+</ol>
+<h2 id="generic-implementation-examples"><a class="doc-anchor" href="#generic-implementation-examples">§</a>Generic Implementation Examples</h2><h3 id="common-statistics"><a class="doc-anchor" href="#common-statistics">§</a>Common Statistics</h3>
+<p>In this example, we implement a <code>count_bases</code> function that for supports both the FASTA and FASTQ
+format.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::io::{fasta, fastq, fastx};
+<span class="kw">use </span>std::io;
+
+<span class="kw">fn </span>count_bases&lt;T, E, I&gt;(records: I) -&gt; <span class="prelude-ty">Result</span>&lt;usize, E&gt;
+<span class="kw">where
+    </span>T: fastx::Record,
+    E: std::error::Error,
+    I: fastx::Records&lt;T, E&gt;,
+{
+    <span class="kw">let </span><span class="kw-2">mut </span>nb_bases = <span class="number">0</span>;
+    <span class="kw">for </span>result <span class="kw">in </span>records {
+        <span class="kw">let </span>record = result<span class="question-mark">?</span>;
+        nb_bases += record.seq().len();
+    }
+    <span class="prelude-val">Ok</span>(nb_bases)
+}
+
+<span class="kw">let </span><span class="kw-2">mut </span>raw_reader = io::Cursor::new(
+    <span class="string">b"&gt;id desc
+ACTG
+"</span>,
+);
+
+<span class="kw">match </span>fastx::get_kind_seek(<span class="kw-2">&amp;mut </span>raw_reader) {
+    <span class="prelude-val">Ok</span>(fastx::Kind::FASTA) =&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>reader = fasta::Reader::new(raw_reader);
+        <span class="kw">let </span>nb_bases = count_bases(reader.records()).unwrap();
+        <span class="macro">println!</span>(<span class="string">"Number of bases: {}"</span>, nb_bases);
+    }
+    <span class="prelude-val">Ok</span>(fastx::Kind::FASTQ) =&gt; {
+        <span class="kw">let </span><span class="kw-2">mut </span>reader = fastq::Reader::new(raw_reader);
+        <span class="kw">let </span>nb_bases = count_bases(reader.records()).unwrap();
+        <span class="macro">println!</span>(<span class="string">"Number of bases: {}"</span>, nb_bases);
+    }
+    <span class="kw">_ </span>=&gt; <span class="macro">println!</span>(<span class="string">"Encountered an error"</span>),
+}</code></pre></div><h3 id="filtration"><a class="doc-anchor" href="#filtration">§</a>Filtration</h3>
+<p>In this example, we define an <code>at_least_n_bases</code> function that can filter FASTA or FASTQ
+records based on their sequence lengths. It works seemlessly with <code>fasta::Record</code>s as if
+it was implemented just for them. In a realistic scenario this function might be
+defined in a library so callers could use it with both FASTA and FASTQ files as needed.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::io::{fasta, fastq, fastx};
+<span class="kw">use </span>std::io;
+<span class="kw">use </span>std::io::BufReader;
+
+<span class="kw">fn </span>at_least_n_bases&lt;T, E, I&gt;(records: I, n: usize) -&gt; <span class="kw">impl </span>Iterator&lt;Item = <span class="prelude-ty">Result</span>&lt;T, E&gt;&gt;
+<span class="kw">where
+    </span>T: fastx::Record,
+    E: std::error::Error,
+    I: fastx::Records&lt;T, E&gt;,
+{
+    records.filter(<span class="kw">move </span>|rr| <span class="kw">match </span>rr {
+        <span class="prelude-val">Ok</span>(r) =&gt; r.seq().len() &gt; n,
+        <span class="kw">_ </span>=&gt; <span class="bool-val">true</span>,
+    })
+}
+
+<span class="kw">let </span><span class="kw-2">mut </span>reader = fasta::Reader::new(BufReader::new(io::stdin()));
+<span class="kw">let </span><span class="kw-2">mut </span>writer = fasta::Writer::new(io::stdout());
+
+<span class="kw">for </span>record <span class="kw">in </span>at_least_n_bases(reader.records(), <span class="number">10</span>) {
+    writer.write_record(<span class="kw-2">&amp;</span>record.unwrap());
+}</code></pre></div><h2 id="dynamic-type-examples"><a class="doc-anchor" href="#dynamic-type-examples">§</a>Dynamic Type Examples</h2>
+<p>If the type of a record is not known at compile time you can represent it with <code>fastx::EitherRecord</code>.
+This type is an enum containing either a <code>fasta::Record</code> or a <code>fastq::Record</code>. There are also
+utility functions defined on the enum so you can work with them without converting to the
+underlying type.</p>
+<p>Note that using dynamic types like this incurs a slight performance cost around 5-10% when
+compared to the typing based approach or parsing a single type directly.</p>
+<h3 id="parsing-data-of-either-the-fasta-of-fastq-type"><a class="doc-anchor" href="#parsing-data-of-either-the-fasta-of-fastq-type">§</a>Parsing data of either the FASTA of FASTQ type</h3>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::io::fastx::{EitherRecords, Record};
+<span class="kw">use </span>std::io;
+<span class="kw">use </span>std::io::BufReader;
+<span class="kw">use </span>std::str;
+
+<span class="kw">let </span><span class="kw-2">mut </span>records = EitherRecords::from(BufReader::new(io::stdin()));
+<span class="kw">while let </span><span class="prelude-val">Some</span>(<span class="prelude-val">Ok</span>(record)) = records.next() {
+    <span class="macro">println!</span>(<span class="string">"id  : {}"</span>, record.id());
+    <span class="macro">println!</span>(<span class="string">"desc: {}"</span>, record.desc().unwrap_or(<span class="string">"none"</span>));
+    <span class="macro">println!</span>(<span class="string">"seq : {}"</span>, str::from_utf8(record.seq()).unwrap_or(<span class="string">"error"</span>));
+    <span class="comment">// Add a default quality in case we have a FASTA record
+    </span><span class="kw">let </span>default_qual = <span class="macro">vec!</span>[<span class="string">b'I'</span>; record.seq().len()];
+    <span class="kw">let </span>qual = record.qual().unwrap_or(<span class="kw-2">&amp;</span>default_qual);
+    <span class="macro">println!</span>(<span class="string">"qual: {}"</span>, str::from_utf8(qual).unwrap_or(<span class="string">"error"</span>));
+    <span class="macro">println!</span>(<span class="string">""</span>)
+}</code></pre></div><h2 id="utility-examples"><a class="doc-anchor" href="#utility-examples">§</a>Utility Examples</h2><h3 id="type-detection"><a class="doc-anchor" href="#type-detection">§</a>Type Detection</h3>
+<p>This module provides utilities for detecting if some data is a FASTA/FASTQ.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::io::fastx::{get_kind, get_kind_file, get_kind_seek, Kind};
+<span class="kw">use </span>std::fs;
+<span class="kw">use </span>std::fs::File;
+<span class="kw">use </span>std::io;
+<span class="kw">use </span>std::io::prelude::<span class="kw-2">*</span>;
+
+<span class="comment">// From a Read
+
+</span><span class="kw">fn </span>from_read() -&gt; io::Result&lt;Kind&gt; {
+    <span class="kw">let </span>reader = io::stdin();
+    <span class="kw">let </span>(<span class="kw-2">mut </span>new_reader, kind) = get_kind(reader)<span class="question-mark">?</span>;
+    <span class="macro">println!</span>(<span class="string">"{}"</span>, kind);
+    <span class="comment">// Read from start of your old reader
+    </span><span class="kw">let </span><span class="kw-2">mut </span>buf = [<span class="number">0u8</span>; <span class="number">8</span>];
+    new_reader.read(<span class="kw-2">&amp;mut </span>buf)<span class="question-mark">?</span>;
+    <span class="prelude-val">Ok</span>(kind)
+}
+
+<span class="comment">// From a Read + Seek
+
+</span><span class="kw">fn </span>from_read_seek() -&gt; io::Result&lt;Kind&gt; {
+    <span class="kw">let </span><span class="kw-2">mut </span>read_seek = io::Cursor::new(
+        <span class="string">b"&gt;id desc
+ACTG
+"</span>,
+    );
+
+    get_kind_seek(<span class="kw-2">&amp;mut </span>read_seek)
+}
+
+<span class="comment">// From a file path
+
+</span><span class="kw">fn </span>from_file_path() -&gt; io::Result&lt;Kind&gt; {
+    get_kind_file(<span class="string">"foo.fasta"</span>)
+}</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.EitherRecords.html" title="struct bio::io::fastx::EitherRecords">Either<wbr>Records</a></dt></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.EitherRecord.html" title="enum bio::io::fastx::EitherRecord">Either<wbr>Record</a></dt><dt><a class="enum" href="enum.Error.html" title="enum bio::io::fastx::Error">Error</a></dt><dt><a class="enum" href="enum.Kind.html" title="enum bio::io::fastx::Kind">Kind</a></dt></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.Record.html" title="trait bio::io::fastx::Record">Record</a></dt><dt><a class="trait" href="trait.Records.html" title="trait bio::io::fastx::Records">Records</a></dt></dl><h2 id="functions" class="section-header">Functions<a href="#functions" class="anchor">§</a></h2><dl class="item-table"><dt><a class="fn" href="fn.get_kind.html" title="fn bio::io::fastx::get_kind">get_<wbr>kind</a></dt><dd>Determine whether a <a href="https://doc.rust-lang.org/1.95.0/std/io/trait.Read.html" title="trait std::io::Read"><code>Read</code></a> is a FASTA or FASTQ.</dd><dt><a class="fn" href="fn.get_kind_detailed.html" title="fn bio::io::fastx::get_kind_detailed">get_<wbr>kind_<wbr>detailed</a></dt><dd>Determine whether a <a href="https://doc.rust-lang.org/1.95.0/std/io/trait.Read.html" title="trait std::io::Read"><code>Read</code></a> is a FASTA or FASTQ.</dd><dt><a class="fn" href="fn.get_kind_file.html" title="fn bio::io::fastx::get_kind_file">get_<wbr>kind_<wbr>file</a></dt><dd>Determine whether a file is a FASTA or FASTQ.</dd><dt><a class="fn" href="fn.get_kind_seek.html" title="fn bio::io::fastx::get_kind_seek">get_<wbr>kind_<wbr>seek</a></dt><dd>Determine whether a <a href="https://doc.rust-lang.org/1.95.0/std/io/trait.Read.html" title="trait std::io::Read"><code>Read</code></a> + <a href="https://doc.rust-lang.org/1.95.0/std/io/trait.Seek.html" title="trait std::io::Seek"><code>Seek</code></a> is a FASTA or FASTQ.</dd></dl></section></div></main></body></html>

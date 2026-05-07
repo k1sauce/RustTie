@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["lcp","shortest_unique_substrings","suffix_array","suffix_array_int"],"struct":["SampledSuffixArray"],"trait":["SuffixArray"],"type":["LCPArray","RawSuffixArray","RawSuffixArraySlice"]};

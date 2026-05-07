@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"enum":["BackwardSearchResult"],"struct":["BiInterval","FMDIndex","FMIndex","Interval"],"trait":["FMIndexable"]};

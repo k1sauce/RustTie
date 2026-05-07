@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["bed","bedpe","common","fasta","fastq","fastx","gff"]};

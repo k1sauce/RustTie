@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["english_ascii_lower_alphabet","english_ascii_upper_alphabet"],"mod":["dna","protein","rna"],"struct":["Alphabet","QGrams","RankTransform","RevQGrams"],"type":["SymbolRanks"]};

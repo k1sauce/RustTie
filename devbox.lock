@@ -1,0 +1,154 @@
+{
+  "lockfile_version": "1",
+  "packages": {
+    "bowtie2@latest": {
+      "last_modified": "2026-04-23T13:07:47Z",
+      "resolved": "github:NixOS/nixpkgs/01fbdeef22b76df85ea168fbfe1bfd9e63681b30#bowtie2",
+      "source": "devbox-search",
+      "version": "2.5.4",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/1vha89xvlkddb50w2lzmafpa96n41why-bowtie2-2.5.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/1vha89xvlkddb50w2lzmafpa96n41why-bowtie2-2.5.4"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/g95yy8r6lrhfnsbsjrnf93vya3fvayq1-bowtie2-2.5.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/g95yy8r6lrhfnsbsjrnf93vya3fvayq1-bowtie2-2.5.4"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/0y3x8iv35qj90g5rfvid7ril4r9g2giq-bowtie2-2.5.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/0y3x8iv35qj90g5rfvid7ril4r9g2giq-bowtie2-2.5.4"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/6n19l799mr5h2gbjil4l6vv29da6g7ny-bowtie2-2.5.4",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/6n19l799mr5h2gbjil4l6vv29da6g7ny-bowtie2-2.5.4"
+        }
+      }
+    },
+    "github:NixOS/nixpkgs/nixpkgs-unstable": {
+      "last_modified": "2026-05-03T16:35:46Z",
+      "resolved": "github:NixOS/nixpkgs/73c703c22422b8951895a960959dbbaca7296492?lastModified=1777826146"
+    },
+    "rustup@latest": {
+      "last_modified": "2026-04-23T13:07:47Z",
+      "plugin_version": "0.0.1",
+      "resolved": "github:NixOS/nixpkgs/01fbdeef22b76df85ea168fbfe1bfd9e63681b30#rustup",
+      "source": "devbox-search",
+      "version": "1.29.0",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/zviv90gxv3gpnr05gsvyq81v45y58312-rustup-1.29.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/zviv90gxv3gpnr05gsvyq81v45y58312-rustup-1.29.0"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/d75lzy3my3nznkr4lan25qlglzj9dinc-rustup-1.29.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/d75lzy3my3nznkr4lan25qlglzj9dinc-rustup-1.29.0"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/927rnc4yvpas5rgsmm1ymih8vv3pivds-rustup-1.29.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/927rnc4yvpas5rgsmm1ymih8vv3pivds-rustup-1.29.0"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/xiy3ydpzw5bdqqd7ri8qbg3bn4r2qxg1-rustup-1.29.0",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/xiy3ydpzw5bdqqd7ri8qbg3bn4r2qxg1-rustup-1.29.0"
+        }
+      }
+    },
+    "samtools@latest": {
+      "last_modified": "2026-04-23T13:07:47Z",
+      "resolved": "github:NixOS/nixpkgs/01fbdeef22b76df85ea168fbfe1bfd9e63681b30#samtools",
+      "source": "devbox-search",
+      "version": "1.22.1",
+      "systems": {
+        "aarch64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/7fsa21jf5i668x7k3xdkrh5rxiv38q5z-samtools-1.22.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/7fsa21jf5i668x7k3xdkrh5rxiv38q5z-samtools-1.22.1"
+        },
+        "aarch64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/vxmwnmp1lhnnc9c4g499gqfjqs1ikayn-samtools-1.22.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/vxmwnmp1lhnnc9c4g499gqfjqs1ikayn-samtools-1.22.1"
+        },
+        "x86_64-darwin": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/vrgnw6zdw8wdlabc7zg4qk71fjj04b5v-samtools-1.22.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/vrgnw6zdw8wdlabc7zg4qk71fjj04b5v-samtools-1.22.1"
+        },
+        "x86_64-linux": {
+          "outputs": [
+            {
+              "name": "out",
+              "path": "/nix/store/79snjz6ikaij28zgraz89h0zzzq402za-samtools-1.22.1",
+              "default": true
+            }
+          ],
+          "store_path": "/nix/store/79snjz6ikaij28zgraz89h0zzzq402za-samtools-1.22.1"
+        }
+      }
+    }
+  }
+}

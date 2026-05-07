@@ -1,0 +1,18 @@
+[package]
+name = "rusttie-align"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+keywords.workspace = true
+categories.workspace = true
+description = "Seed-and-extend alignment, descent driver, MAPQ, paired-end mate-rescue for RustTie."
+
+[dependencies]
+rusttie-index.workspace = true
+bio.workspace = true
+anyhow.workspace = true

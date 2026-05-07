@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"fn":["bwt","bwtfind","invert_bwt","less"],"struct":["Occ"],"type":["BWT","BWTFind","BWTSlice","Less"]};

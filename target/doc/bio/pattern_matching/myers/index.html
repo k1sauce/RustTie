@@ -1,0 +1,188 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="Myers bit-parallel approximate pattern matching algorithm. Finds all matches up to a given edit distance k and supports ambiguous matching. Methods for obtaining the alignment path are provided. The simple and fast implementation works with patterns of up to 64 or 128 symbols, depending on the bit vector type used. The block-based implementation (`long` submodule) supports patterns of arbitrary length."><title>bio::pattern_matching::myers - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="bio" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="icon" href="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module myers</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../bio/index.html"><img src="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg" alt="logo"></a><h2><a href="../../../bio/index.html">bio</a><span class="version">3.0.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module myers</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#example" title="Example">Example</a></li><li><a href="#long-patterns" title="Long patterns">Long patterns</a></li><li><a href="#obtaining-the-start-position-of-a-match" title="Obtaining the start position of a match">Obtaining the start position of a match</a></li><li><a href="#obtaining-alignments" title="Obtaining alignments">Obtaining alignments</a></li><li><a href="#finding-the-best-hit" title="Finding the best hit">Finding the best hit</a></li><li><a href="#dealing-with-ambiguities" title="Dealing with ambiguities">Dealing with ambiguities</a></li></ul><h3><a href="#modules">Module Items</a></h3><ul class="block"><li><a href="#modules" title="Modules">Modules</a></li><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In bio::<wbr>pattern_<wbr>matching</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">bio</a>::<wbr><a href="../index.html">pattern_matching</a></div><h1>Module <span>myers</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/bio/pattern_matching/myers/mod.rs.html#6-288">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>Myers bit-parallel approximate pattern matching algorithm.
+Finds all matches up to a given edit distance k and supports ambiguous matching.
+Methods for obtaining the alignment path are provided.
+The simple and fast implementation works with patterns of up to
+64 or 128 symbols, depending on the bit vector type used.
+The block-based implementation (<a href="long/index.html" title="mod bio::pattern_matching::myers::long"><code>long</code></a> submodule) supports patterns of
+arbitrary length.</p>
+<p>The time complexity is O(n) where n is the length of the text.
+With unlimited pattern matching (<a href="long/index.html" title="mod bio::pattern_matching::myers::long"><code>long</code></a>), the time additionally scales with
+the distance threshold k: O(n * k). The search can be considered linear-time
+if k is kept constant.</p>
+<p>While the search only yields the end position and edit distance of matches,
+additional methods are provided for obtaining the start and the alignment path
+(edit operations) of a hit, in O(m + k) worst-case time.
+The implementation is very  similar to Edlib’s (Šošić and Šikić, 2017),
+although minor differences may occur when there are multiple possible
+alignments with the same edit distance.
+Edlib prioritizes InDels over substitutions (insertion &gt; deletion &gt; substitution),
+whereas this implementation prioritizes substitutions (substitution &gt; insertion &gt; deletion).</p>
+<p>Myers, G. (1999). <em>A fast bit-vector algorithm for approximate string matching based on dynamic
+programming</em>. Journal of the ACM (JACM) 46, 395–415. <a href="https://doi.org/10.1145/316542.316550">https://doi.org/10.1145/316542.316550</a></p>
+<p>Šošić, M., and Šikić, M. (2017). <em>Edlib: a C/C ++ library for fast, exact sequence alignment
+using edit distance.</em> Bioinformatics 33, 1394–1395. <a href="https://doi.org/10.1093/bioinformatics/btw753">https://doi.org/10.1093/bioinformatics/btw753</a></p>
+<h2 id="example"><a class="doc-anchor" href="#example">§</a>Example</h2>
+<p>Iterating over matches in pairs of <code>(end, distance)</code> using <code>u64</code> as bit vector type:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::pattern_matching::myers::Myers;
+
+<span class="kw">let </span>text = <span class="string">b"CGGTCCTGAGGGATTAGCAC"</span>;
+<span class="kw">let </span>pattern = <span class="string">b"TCCTAGGGC"</span>;
+
+<span class="kw">let </span>myers = Myers::&lt;u64&gt;::new(pattern);
+<span class="kw">let </span>occ: Vec&lt;<span class="kw">_</span>&gt; = myers.find_all_end(text, <span class="number">2</span>).collect();
+
+<span class="macro">assert_eq!</span>(occ, [(<span class="number">11</span>, <span class="number">2</span>), (<span class="number">12</span>, <span class="number">2</span>)]);</code></pre></div><h2 id="long-patterns"><a class="doc-anchor" href="#long-patterns">§</a>Long patterns</h2>
+<p>It is also possible to to construct <code>Myers::&lt;u128&gt;</code>, which handles patterns with
+up to 128 symbols using the standard algorithm.</p>
+<p>In addition, the <a href="long/index.html" title="mod bio::pattern_matching::myers::long"><code>long</code></a> submodule handles unlimited patterns by splitting
+them into separate blocks. An example:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::pattern_matching::myers::{long, Myers};
+
+<span class="kw">let </span>text = <span class="string">b"CGGTCCTGAGGGATTAGCAC"</span>;
+<span class="kw">let </span>pattern = <span class="string">b"TCCTAGGGC"</span>;
+
+<span class="kw">let </span>myers_64 = Myers::&lt;u64&gt;::new(pattern);
+<span class="kw">let </span>occ_64: Vec&lt;<span class="kw">_</span>&gt; = myers_64.find_all_end(text, <span class="number">2</span>).collect();
+
+<span class="comment">// the pattern of length 9 is too long to fit into a single `u8` bit vector
+// (panics!)
+// let myers_8 = Myers::&lt;u8&gt;::new(pattern);
+
+// However, we can use `long::Myers` with `u8` blocks
+</span><span class="kw">let </span>myers_long_8 = long::Myers::&lt;u8&gt;::new(pattern);
+<span class="kw">let </span>occ_long_8: Vec&lt;<span class="kw">_</span>&gt; = myers_long_8
+    .find_all_end(text, <span class="number">2</span>)
+    .map(|(end, dist)| (end, dist <span class="kw">as </span>u8))
+    .collect();
+
+<span class="macro">assert_eq!</span>(occ_64, occ_long_8);</code></pre></div><div class="warning">
+<p><code>u8</code> is used for demonstration, but <code>long::Myers::&lt;u64&gt;</code> is still
+the best in most cases.</p>
+</div>
+<h2 id="obtaining-the-start-position-of-a-match"><a class="doc-anchor" href="#obtaining-the-start-position-of-a-match">§</a>Obtaining the start position of a match</h2>
+<p>The <code>Myers::find_all</code> method provides an iterator over tuples of <code>(start, end, distance)</code>.
+As calculating the start position requires finding the alignment path, this is
+slower than <code>Myers::find_all_end</code>.</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::pattern_matching::myers::Myers;
+
+<span class="kw">let </span>text = <span class="string">b"CGGTCCTGAGGGATTAGCAC"</span>;
+<span class="kw">let </span>pattern = <span class="string">b"TCCTAGGGC"</span>;
+
+<span class="kw">let </span><span class="kw-2">mut </span>myers = Myers::&lt;u64&gt;::new(pattern);
+<span class="kw">let </span>occ: Vec&lt;<span class="kw">_</span>&gt; = myers.find_all(text, <span class="number">2</span>).collect();
+
+<span class="macro">assert_eq!</span>(occ, [(<span class="number">3</span>, <span class="number">12</span>, <span class="number">2</span>), (<span class="number">3</span>, <span class="number">13</span>, <span class="number">2</span>)]);</code></pre></div><div class="warning">
+<p>The end positions here are greater by one than in <code>Myers::find_all_end</code>.
+This is intentional, since the iterator returns a range rather than an index, and in
+Rust, ranges do not include the end position.</p>
+</div>
+<h2 id="obtaining-alignments"><a class="doc-anchor" href="#obtaining-alignments">§</a>Obtaining alignments</h2>
+<p><a href="struct.FullMatches.html"><code>FullMatches</code></a> returned by <code>Myers::find_all()</code> also provide a method
+for obtaining an alignment path:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::alignment::Alignment;
+<span class="kw">use </span>bio::pattern_matching::myers::Myers;
+
+<span class="kw">let </span>text = <span class="string">b"CGGTCCTGAGGGATTAGCAC"</span>;
+<span class="kw">let </span>pattern = <span class="string">b"TCCTAGGGC"</span>;
+
+<span class="kw">let </span><span class="kw-2">mut </span>myers = Myers::&lt;u64&gt;::new(pattern);
+<span class="comment">// create an 'empty' alignment instance, which can be reused
+</span><span class="kw">let </span><span class="kw-2">mut </span>aln = Alignment::default();
+
+<span class="kw">let </span><span class="kw-2">mut </span>matches = myers.find_all(text, <span class="number">3</span>);
+<span class="kw">while </span>matches.next_alignment(<span class="kw-2">&amp;mut </span>aln) {
+    <span class="macro">println!</span>(
+        <span class="string">"Hit found in range: {}..{} (distance: {})"</span>,
+        aln.ystart, aln.yend, aln.score
+    );
+    <span class="macro">println!</span>(<span class="string">"{}"</span>, aln.pretty(pattern, text, <span class="number">80</span>));
+}</code></pre></div>
+<p><strong>Output:</strong></p>
+<pre>
+Hit found in range: 3..10 (distance: 3)
+   TCCTAGGGC
+   ||||+|\|+
+TCCTCCT-GAG-GGATTAGCAC
+
+Hit found in range: 3..11 (distance: 3)
+   TCCTAGGGC
+   ||||+|\|\
+TCCTCCT-GAGGGATTAGCAC
+
+Hit found in range: 3..12 (distance: 2)
+   TCCT-AGGGC
+   ||||x||||+
+TCCTCCTGAGGG-ATTAGCAC
+
+Hit found in range: 3..13 (distance: 2)
+   TCCT-AGGGC
+   ||||x||||\
+TCCTCCTGAGGGATTAGCAC
+
+... (truncated)
+
+</pre>
+<p><strong>Note</strong> that the <a href="../../alignment/struct.Alignment.html"><code>Alignment</code></a> instance is created
+only once and then reused. Since the Myers algorithm is very fast, the allocation
+of <code>Alignment::operations</code> can have a non-negligible impact on performance.</p>
+<h2 id="finding-the-best-hit"><a class="doc-anchor" href="#finding-the-best-hit">§</a>Finding the best hit</h2>
+<p>In many cases, only the match with the smallest edit distance is the only one of.
+interest. Therefore, calculating an alignment for every hit is not necessary.
+<a href="struct.LazyMatches.html"><code>LazyMatches</code></a> returned by <code>Myers::find_all_lazy()</code>
+provide an iterator over tuples of <code>(end, distance)</code> as <code>Myers::find_all_end()</code>.
+However, the information needed to calculate the alignment path later on
+is also stored. This has a slight performance impact and requires O(n) memory,
+as opposed to O(m + k) for <code>Myers::find_all()</code>.
+Still, the following code is faster than using <code>Myers::find_all()</code>:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::alignment::Alignment;
+<span class="kw">use </span>bio::pattern_matching::myers::Myers;
+
+<span class="kw">let </span>text = <span class="string">b"CGGTCCTGAGGGATTAGCAC"</span>;
+<span class="kw">let </span>pattern = <span class="string">b"TCCTAGGGC"</span>;
+
+<span class="kw">let </span><span class="kw-2">mut </span>myers = Myers::&lt;u64&gt;::new(pattern);
+<span class="kw">let </span><span class="kw-2">mut </span>aln = Alignment::default();
+
+<span class="kw">let </span><span class="kw-2">mut </span>matches = myers.find_all_lazy(text, <span class="number">2</span>);
+
+<span class="comment">// first, find the best hit
+</span><span class="kw">let </span>(best_end, <span class="kw">_</span>) = matches.by_ref().min_by_key(|<span class="kw-2">&amp;</span>(<span class="kw">_</span>, dist)| dist).unwrap();
+
+<span class="comment">// now calculate the alignment
+</span>matches.alignment_at(best_end, <span class="kw-2">&amp;mut </span>aln);
+<span class="macro">println!</span>(
+    <span class="string">"Best alignment at {}..{} (distance: {})"</span>,
+    aln.ystart, aln.yend, aln.score
+);
+<span class="macro">println!</span>(<span class="string">"{}"</span>, aln.pretty(pattern, text, <span class="number">80</span>));</code></pre></div>
+<p><strong>Output:</strong></p>
+<pre>
+Best alignment at 3..12 (distance: 2)
+   TCCT-AGGGC
+   ||||x||||+
+TCCTCCTGAGGG-ATTAGCAC
+</pre>
+<p>Actually as seen in the previous chapters, there are two hits with the same distance of 2.
+It may make sense to consider both of them.</p>
+<h2 id="dealing-with-ambiguities"><a class="doc-anchor" href="#dealing-with-ambiguities">§</a>Dealing with ambiguities</h2>
+<p>Matching of multiple or all symbols at once can be configured through <code>MyersBuilder</code>.
+In the following example, <code>N</code> matches <code>A</code>, <code>C</code>, <code>G</code> or <code>T</code>:</p>
+
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>bio::pattern_matching::myers::MyersBuilder;
+
+<span class="kw">let </span>text = <span class="string">b"GTCTGATCTTACC"</span>;
+<span class="kw">let </span>pattern = <span class="string">b"TGATCNT"</span>;
+
+<span class="kw">let </span>myers = MyersBuilder::new().ambig(<span class="string">b'N'</span>, <span class="string">b"ACGT"</span>).build_64(pattern);
+<span class="macro">assert_eq!</span>(myers.distance(text), <span class="number">0</span>);</code></pre></div>
+<p>See the documentation of <a href="struct.MyersBuilder.html"><code>MyersBuilder</code></a> for more examples.</p>
+</div></details><h2 id="modules" class="section-header">Modules<a href="#modules" class="anchor">§</a></h2><dl class="item-table"><dt><a class="mod" href="long/index.html" title="mod bio::pattern_matching::myers::long">long</a></dt><dd>Myers bit-parallel approximate pattern matching with unlimited pattern length.</dd></dl><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.FullMatches.html" title="struct bio::pattern_matching::myers::FullMatches">Full<wbr>Matches</a></dt><dd>Iterator over tuples of (start, end, distance).
+Further methods for obtaining the hit alignment path are provided.</dd><dt><a class="struct" href="struct.LazyMatches.html" title="struct bio::pattern_matching::myers::LazyMatches">Lazy<wbr>Matches</a></dt><dd>Iterator over tuples of (end, distance).
+Further methods for obtaining the hit alignment path are provided.</dd><dt><a class="struct" href="struct.Matches.html" title="struct bio::pattern_matching::myers::Matches">Matches</a></dt><dd>Iterator over pairs of end positions and distance of matches.</dd><dt><a class="struct" href="struct.Myers.html" title="struct bio::pattern_matching::myers::Myers">Myers</a></dt><dd>Myers algorithm.</dd><dt><a class="struct" href="struct.MyersBuilder.html" title="struct bio::pattern_matching::myers::MyersBuilder">Myers<wbr>Builder</a></dt><dd>Builds a Myers instance, allowing to specify ambiguities.</dd></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.BitVec.html" title="trait bio::pattern_matching::myers::BitVec">BitVec</a></dt><dd>This trait must be implemented for integer types serving as bit vectors.
+Only unsigned integers will work correctly.</dd><dt><a class="trait" href="trait.DistType.html" title="trait bio::pattern_matching::myers::DistType">Dist<wbr>Type</a></dt><dd>Trait for types used to store the edit distance when using the simple
+Myers algorithm (not the block-based one, which always uses <code>usize</code>).</dd></dl></section></div></main></body></html>

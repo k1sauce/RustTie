@@ -1,0 +1,1 @@
+window.SIDEBAR_ITEMS = {"mod":["long"],"struct":["FullMatches","LazyMatches","Matches","Myers","MyersBuilder"],"trait":["BitVec","DistType"]};

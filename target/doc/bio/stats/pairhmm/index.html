@@ -1,0 +1,103 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><meta name="generator" content="rustdoc"><meta name="description" content="This module contains the implementation of a classic `PairHMM` as described in Durbin, R., Eddy, S., Krogh, A., &#38; Mitchison, G. (1998). Biological Sequence Analysis. Current Topics in Genome Analysis 2008. http://doi.org/10.1017/CBO9780511790492. It also contains a modified variant `HomopolyPairHMM` with additional homopolymer states suited for dealing with homopolymer runs in sequencing as often encountered in Oxford Nanopore sequencing data."><title>bio::stats::pairhmm - Rust</title><script>if(window.location.protocol!=="file:")document.head.insertAdjacentHTML("beforeend","SourceSerif4-Regular-6b053e98.ttf.woff2,FiraSans-Italic-81dc35de.woff2,FiraSans-Regular-0fe48ade.woff2,FiraSans-MediumItalic-ccf7e434.woff2,FiraSans-Medium-e1aa3f0a.woff2,SourceCodePro-Regular-8badfe75.ttf.woff2,SourceCodePro-Semibold-aa29a496.ttf.woff2".split(",").map(f=>`<link rel="preload" as="font" type="font/woff2"href="../../../static.files/${f}">`).join(""))</script><link rel="stylesheet" href="../../../static.files/normalize-9960930a.css"><link rel="stylesheet" href="../../../static.files/rustdoc-b7b9f40b.css"><meta name="rustdoc-vars" data-root-path="../../../" data-static-root-path="../../../static.files/" data-current-crate="bio" data-themes="" data-resource-suffix="" data-rustdoc-version="1.95.0 (59807616e 2026-04-14)" data-channel="1.95.0" data-search-js="search-63369b7b.js" data-stringdex-js="stringdex-b897f86f.js" data-settings-js="settings-170eb4bf.js" ><script src="../../../static.files/storage-41dd4d93.js"></script><script defer src="../sidebar-items.js"></script><script defer src="../../../static.files/main-5013f961.js"></script><noscript><link rel="stylesheet" href="../../../static.files/noscript-f7c3ffd8.css"></noscript><link rel="icon" href="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg"></head><body class="rustdoc mod"><a class="skip-main-content" href="#main-content">Skip to main content</a><!--[if lte IE 11]><div class="warning">This old browser is unsupported and will most likely display funky things.</div><![endif]--><rustdoc-topbar><h2><a href="#">Module pairhmm</a></h2></rustdoc-topbar><nav class="sidebar"><div class="sidebar-crate"><a class="logo-container" href="../../../bio/index.html"><img src="https://raw.githubusercontent.com/rust-bio/rust-bio/master/img/bioferris.svg" alt="logo"></a><h2><a href="../../../bio/index.html">bio</a><span class="version">3.0.0</span></h2></div><div class="sidebar-elems"><section id="rustdoc-toc"><h2 class="location"><a href="#">Module pairhmm</a></h2><h3><a href="#">Sections</a></h3><ul class="block top-toc"><li><a href="#examples" title="Examples">Examples</a></li></ul><h3><a href="#structs">Module Items</a></h3><ul class="block"><li><a href="#structs" title="Structs">Structs</a></li><li><a href="#enums" title="Enums">Enums</a></li><li><a href="#traits" title="Traits">Traits</a></li></ul></section><div id="rustdoc-modnav"><h2><a href="../index.html">In bio::<wbr>stats</a></h2></div></div></nav><div class="sidebar-resizer" title="Drag to resize sidebar"></div><main><div class="width-limiter"><section id="main-content" class="content" tabindex="-1"><div class="main-heading"><div class="rustdoc-breadcrumbs"><a href="../../index.html">bio</a>::<wbr><a href="../index.html">stats</a></div><h1>Module <span>pairhmm</span>&nbsp;<button id="copy-path" title="Copy item path to clipboard">Copy item path</button></h1><rustdoc-toolbar></rustdoc-toolbar><span class="sub-heading"><a class="src" href="../../../src/bio/stats/pairhmm/mod.rs.html#1-199">Source</a> </span></div><details class="toggle top-doc" open><summary class="hideme"><span>Expand description</span></summary><div class="docblock"><p>This module contains the implementation of a classic <code>PairHMM</code> as described in
+Durbin, R., Eddy, S., Krogh, A., &amp; Mitchison, G. (1998). Biological Sequence Analysis.
+Current Topics in Genome Analysis 2008. http://doi.org/10.1017/CBO9780511790492.
+It also contains a modified variant <code>HomopolyPairHMM</code> with additional homopolymer states suited
+for dealing with homopolymer runs in sequencing as often encountered in Oxford Nanopore
+sequencing data.</p>
+<p>Traits defined in this module apply to both <code>PairHMM</code> and <code>HomopolyPairHMM</code>.</p>
+<h2 id="examples"><a class="doc-anchor" href="#examples">§</a>Examples</h2>
+<div class="example-wrap"><pre class="rust rust-example-rendered"><code><span class="kw">use </span>approx::assert_relative_eq;
+<span class="kw">use </span>bio::stats::pairhmm::{
+    EmissionParameters, GapParameters, PairHMM, StartEndGapParameters, XYEmission,
+};
+<span class="kw">use </span>bio::stats::{LogProb, Prob};
+<span class="kw">use </span>num_traits::Zero;
+
+<span class="comment">// Two sequences for which we'd like to know if they are likely related.
+</span><span class="kw">let </span>x = <span class="string">b"AAAA"</span>;
+<span class="kw">let </span>y = <span class="string">b"AAAT"</span>;
+
+<span class="comment">// For this example, we disallow gaps, so all probabilities are zero here.
+</span><span class="kw">struct </span>GapParams;
+<span class="kw">impl </span>GapParameters <span class="kw">for </span>GapParams {
+    <span class="kw">fn </span>prob_gap_x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LogProb {
+        LogProb::zero()
+    }
+    <span class="kw">fn </span>prob_gap_y(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LogProb {
+        LogProb::zero()
+    }
+    <span class="kw">fn </span>prob_gap_x_extend(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LogProb {
+        LogProb::zero()
+    }
+    <span class="kw">fn </span>prob_gap_y_extend(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; LogProb {
+        LogProb::zero()
+    }
+}
+<span class="kw">let </span>gap_params = GapParams;
+
+<span class="comment">// The PairHMM instance stores the gap params, since these are constant.
+</span><span class="kw">let </span><span class="kw-2">mut </span>pairhmm = PairHMM::new(<span class="kw-2">&amp;</span>gap_params);
+
+<span class="comment">// However, emission parameters depend on the actual sequences
+</span><span class="kw">struct </span>EmissionParams {
+    x: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8],
+    y: <span class="kw-2">&amp;</span><span class="lifetime">'static </span>[u8],
+}
+
+<span class="kw">const </span>PROB_SUBSTITUTION: f64 = <span class="number">0.1</span>;
+<span class="kw">const </span>PROB_NO_SUBSTITUION: f64 = <span class="number">1. </span>- PROB_SUBSTITUTION;
+<span class="kw">impl </span>EmissionParameters <span class="kw">for </span>EmissionParams {
+    <span class="kw">fn </span>prob_emit_xy(<span class="kw-2">&amp;</span><span class="self">self</span>, i: usize, j: usize) -&gt; XYEmission {
+        <span class="kw">if </span><span class="self">self</span>.x[i] == <span class="self">self</span>.y[j] {
+            <span class="comment">// if two bases match, emit a Match!
+            </span>XYEmission::Match(LogProb::from(Prob(PROB_NO_SUBSTITUION)))
+        } <span class="kw">else </span>{
+            <span class="comment">// otherwise emit a Mismatch!
+            // Note that the probability here is `mismatch / 3`, since probabilities should sum
+            // to 1 and there are 3 possible mismatch configurations
+            </span>XYEmission::Mismatch(LogProb::from(Prob(PROB_SUBSTITUTION / <span class="number">3.</span>)))
+        }
+    }
+
+    <span class="comment">// In this example, emitting x[i] is as likely as not observing a mismatch.
+    // In more complex cases, this might e.g. depend on base qualities reported by the sequencer
+    </span><span class="kw">fn </span>prob_emit_x(<span class="kw-2">&amp;</span><span class="self">self</span>, i: usize) -&gt; LogProb {
+        LogProb::from(Prob(PROB_NO_SUBSTITUION))
+    }
+    <span class="kw">fn </span>prob_emit_y(<span class="kw-2">&amp;</span><span class="self">self</span>, j: usize) -&gt; LogProb {
+        LogProb::from(Prob(PROB_NO_SUBSTITUION))
+    }
+
+    <span class="kw">fn </span>len_x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.x.len()
+    }
+    <span class="kw">fn </span>len_y(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; usize {
+        <span class="self">self</span>.y.len()
+    }
+}
+
+<span class="comment">// Since we want to do global alignment here, disallow free start and end gaps in x.
+</span><span class="kw">struct </span>GlobalAlignmentMode;
+<span class="kw">impl </span>StartEndGapParameters <span class="kw">for </span>GlobalAlignmentMode {
+    <span class="kw">fn </span>free_start_gap_x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="bool-val">false
+    </span>}
+    <span class="kw">fn </span>free_end_gap_x(<span class="kw-2">&amp;</span><span class="self">self</span>) -&gt; bool {
+        <span class="bool-val">false
+    </span>}
+}
+
+<span class="comment">// Finally calculate the probability of relatedness between x and y!
+</span><span class="kw">let </span>prob_related = pairhmm.prob_related(<span class="kw-2">&amp;</span>EmissionParams { x, y }, <span class="kw-2">&amp;</span>GlobalAlignmentMode, <span class="prelude-val">None</span>);
+
+<span class="comment">// … and compare it to a rough estimation
+</span><span class="kw">let </span>prob_expected = LogProb::from(Prob(PROB_NO_SUBSTITUION.powi(<span class="number">3</span>) * PROB_SUBSTITUTION / <span class="number">3.</span>));
+<span class="macro">assert_relative_eq!</span>(<span class="kw-2">*</span>prob_related, <span class="kw-2">*</span>prob_expected, epsilon = <span class="number">1e-5</span>);</code></pre></div></div></details><h2 id="structs" class="section-header">Structs<a href="#structs" class="anchor">§</a></h2><dl class="item-table"><dt><a class="struct" href="struct.HomopolyPairHMM.html" title="struct bio::stats::pairhmm::HomopolyPairHMM">Homopoly<wbr>PairHMM</a></dt><dd>A pair Hidden Markov Model for comparing sequences x and y as described by
+Durbin, R., Eddy, S., Krogh, A., &amp; Mitchison, G. (1998). Biological Sequence Analysis.
+Current Topics in Genome Analysis 2008. http://doi.org/10.1017/CBO9780511790492.
+The default model has been extended to consider homopolymer errors, at the cost of more states
+and transitions.</dd><dt><a class="struct" href="struct.PairHMM.html" title="struct bio::stats::pairhmm::PairHMM">PairHMM</a></dt><dd>A pair Hidden Markov Model for comparing sequences x and y as described by
+Durbin, R., Eddy, S., Krogh, A., &amp; Mitchison, G. (1998). Biological Sequence Analysis.
+Current Topics in Genome Analysis 2008. http://doi.org/10.1017/CBO9780511790492.</dd></dl><h2 id="enums" class="section-header">Enums<a href="#enums" class="anchor">§</a></h2><dl class="item-table"><dt><a class="enum" href="enum.XYEmission.html" title="enum bio::stats::pairhmm::XYEmission">XYEmission</a></dt></dl><h2 id="traits" class="section-header">Traits<a href="#traits" class="anchor">§</a></h2><dl class="item-table"><dt><a class="trait" href="trait.BaseSpecificHopParameters.html" title="trait bio::stats::pairhmm::BaseSpecificHopParameters">Base<wbr>Specific<wbr>HopParameters</a></dt><dd>Trait for parametrization of <code>PairHMM</code> hop behavior.</dd><dt><a class="trait" href="trait.Emission.html" title="trait bio::stats::pairhmm::Emission">Emission</a></dt><dd>Trait needed for the <code>HomopolyPairHMM</code>, because its implementation details
+depend on the actual bases to distinguish between Match states.</dd><dt><a class="trait" href="trait.EmissionParameters.html" title="trait bio::stats::pairhmm::EmissionParameters">Emission<wbr>Parameters</a></dt><dd>Trait for parametrization of <code>PairHMM</code> emission behavior.</dd><dt><a class="trait" href="trait.GapParameters.html" title="trait bio::stats::pairhmm::GapParameters">GapParameters</a></dt><dd>Trait for parametrization of <code>PairHMM</code> gap behavior.</dd><dt><a class="trait" href="trait.HopParameters.html" title="trait bio::stats::pairhmm::HopParameters">HopParameters</a></dt><dd>Trait for parametrization of <code>PairHMM</code> hop behavior.</dd><dt><a class="trait" href="trait.StartEndGapParameters.html" title="trait bio::stats::pairhmm::StartEndGapParameters">Start<wbr>EndGap<wbr>Parameters</a></dt><dd>Trait for parametrization of <code>PairHMM</code> start and end gap behavior.
+This trait can be used to implement global and semiglobal alignments.</dd></dl></section></div></main></body></html>
