@@ -1,0 +1,5 @@
+/target
+/.devbox
+validate/fixtures/*.bt2
+validate/fixtures/*.fa.fai
+/vendor/
