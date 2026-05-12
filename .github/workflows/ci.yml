@@ -24,12 +24,17 @@ jobs:
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install bowtie2 + wgsim (Linux)
+      - name: Install bowtie2 (Linux)
         if: matrix.os == 'ubuntu-latest'
-        run: sudo apt-get update && sudo apt-get install -y bowtie2 wgsim
-      - name: Install bowtie2 + wgsim (macOS)
+        run: sudo apt-get update && sudo apt-get install -y bowtie2 zlib1g-dev
+      - name: Install bowtie2 (macOS)
         if: matrix.os == 'macos-latest'
-        run: brew install bowtie2 wgsim
+        run: brew install bowtie2
+      - name: Build wgsim from source
+        run: |
+          git clone --depth 1 https://github.com/lh3/wgsim.git /tmp/wgsim
+          cc -g -O2 -Wall -o /tmp/wgsim/wgsim /tmp/wgsim/wgsim.c -lz -lm
+          sudo install -m 755 /tmp/wgsim/wgsim /usr/local/bin/wgsim
       - run: cargo build --workspace --release
       - run: cargo test --workspace --release
 

@@ -44,9 +44,9 @@ thiserror = "2"
 rayon = "1.10"
 
 # internal
-rusttie-index = { path = "crates/rusttie-index" }
-rusttie-align = { path = "crates/rusttie-align" }
-rusttie-io = { path = "crates/rusttie-io" }
+rusttie-index = { path = "crates/rusttie-index", version = "0.0.1" }
+rusttie-align = { path = "crates/rusttie-align", version = "0.0.1" }
+rusttie-io = { path = "crates/rusttie-io", version = "0.0.1" }
 
 [profile.release]
 lto = "fat"

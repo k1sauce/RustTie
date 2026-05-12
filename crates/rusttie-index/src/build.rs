@@ -11,7 +11,6 @@ use std::path::Path;
 
 use anyhow::{Context, Result, anyhow, bail};
 use byteorder::{LittleEndian, WriteBytesExt};
-use noodles_fasta as fasta;
 use sais_rs::suffix_array;
 
 use crate::format::{ENDIAN_NATIVE, FLAG_ENTIRE_REV, FLAG_VALID, OFF_SIZE, ascii_to_2bit};
@@ -399,8 +398,8 @@ fn read_fasta(path: &Path) -> Result<(Vec<String>, Vec<Vec<u8>>)> {
     // breaking byte-equivalence vs `bowtie2-build` on FASTAs like UCSC's
     // hg38.chrM.fa whose header is `>chrM  AC:J01415.2  ...` (double space).
     use std::io::{BufRead, BufReader};
-    let file = std::fs::File::open(path)
-        .with_context(|| format!("opening fasta {}", path.display()))?;
+    let file =
+        std::fs::File::open(path).with_context(|| format!("opening fasta {}", path.display()))?;
     let reader = BufReader::new(file);
     let mut names: Vec<String> = Vec::new();
     let mut seqs: Vec<Vec<u8>> = Vec::new();
