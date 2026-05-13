@@ -27,6 +27,84 @@
 
 use crate::bt2_random::{Random1toN, RandomSource, RowSampler};
 
+/// Input to [`rank_seed_hits`]: per-seed-offset SA range sizes for each
+/// strand. `None` (or `Some(0)`) means "no hits at this offset/strand".
+/// Length of both vectors must equal `n_offs`.
+#[derive(Debug, Clone)]
+pub struct SeedRankInput {
+    pub n_offs: usize,
+    /// `fw_sizes[i]` = SA range size for forward seed at offset index `i`.
+    pub fw_sizes: Vec<Option<u32>>,
+    /// `rc_sizes[i]` = SA range size for revcomp seed at offset index `i`.
+    pub rc_sizes: Vec<Option<u32>>,
+}
+
+/// Port of `SeedResults::rankSeedHits` (`aligner_seed.h:1019-1080`).
+/// Returns `(offset_index, fw_strand)` tuples in BT2's exact iteration
+/// order: smallest-SA-range first, with PRNG-driven tie-breaking via
+/// `nextBool` (strand preference) and `nextU32` (wrap-around scan start).
+///
+/// Critically advances the PRNG state in the exact same call sequence
+/// as BT2 — every rank step does 1 nextBool + 2 nextU32. Downstream
+/// `Random1toN` consumption then aligns with BT2's by construction.
+pub fn rank_seed_hits(
+    input: &SeedRankInput,
+    rnd: &mut RandomSource,
+) -> Vec<(usize, bool)> {
+    let n = input.n_offs;
+    assert_eq!(input.fw_sizes.len(), n);
+    assert_eq!(input.rc_sizes.len(), n);
+    let mut sorted_fw = vec![false; n];
+    let mut sorted_rc = vec![false; n];
+
+    let nonempty = |s: &Option<u32>| s.map(|x| x > 0).unwrap_or(false);
+    let total: usize = input
+        .fw_sizes
+        .iter()
+        .filter(|s| nonempty(s))
+        .count()
+        + input.rc_sizes.iter().filter(|s| nonempty(s)).count();
+
+    let mut out: Vec<(usize, bool)> = Vec::with_capacity(total);
+    if n == 0 || total == 0 {
+        return out;
+    }
+
+    while out.len() < total {
+        let mut min_sz = u32::MAX;
+        let mut min_idx: usize = 0;
+        let mut min_fw = true;
+        let rb = rnd.next_bool();
+        for fwi in 0..2 {
+            let fw = fwi == (if rb { 1 } else { 0 });
+            let sizes = if fw { &input.fw_sizes } else { &input.rc_sizes };
+            let sorted = if fw { &sorted_fw } else { &sorted_rc };
+            let i_start = (rnd.next_u32() as usize) % n;
+            let mut i = i_start;
+            for _ in 0..n {
+                if let Some(sz) = sizes[i]
+                    && sz > 0
+                    && !sorted[i]
+                    && sz < min_sz
+                {
+                    min_sz = sz;
+                    min_idx = i;
+                    min_fw = fw;
+                }
+                i = if i + 1 == n { 0 } else { i + 1 };
+            }
+        }
+        debug_assert!(min_sz != u32::MAX, "should always find a remaining seed");
+        if min_fw {
+            sorted_fw[min_idx] = true;
+        } else {
+            sorted_rc[min_idx] = true;
+        }
+        out.push((min_idx, min_fw));
+    }
+    out
+}
+
 /// A single seed hit in the suffix array: an SA range `[sa_lo, sa_hi)`
 /// with metadata about which seed produced it. Equivalent to BT2's
 /// `SATupleAndPos` (`aligner_sw_driver.h` near `SATupleAndPos`).
@@ -300,6 +378,62 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         assert_eq!(collect(42), collect(42));
+    }
+
+    /// rank_seed_hits: every non-empty seed appears exactly once, in
+    /// size-ascending order with PRNG-driven ties.
+    #[test]
+    fn rank_covers_all_nonempty() {
+        let mut rnd = RandomSource::new(42);
+        let input = SeedRankInput {
+            n_offs: 5,
+            fw_sizes: vec![Some(10), Some(0), Some(3), None, Some(7)],
+            rc_sizes: vec![Some(2), Some(5), None, Some(15), Some(1)],
+        };
+        let ranks = rank_seed_hits(&input, &mut rnd);
+        // fw non-empty (size>0): offsets 0, 2, 4 → 3.
+        // rc non-empty (size>0): offsets 0, 1, 3, 4 → 4.
+        // Total = 7.
+        assert_eq!(ranks.len(), 7);
+        // Verify uniqueness.
+        let mut seen: Vec<(usize, bool)> = ranks.clone();
+        seen.sort();
+        seen.dedup();
+        assert_eq!(seen.len(), 7);
+    }
+
+    /// Ranks are sorted by size ascending (modulo PRNG tie-breaking).
+    #[test]
+    fn rank_sorts_by_size() {
+        let mut rnd = RandomSource::new(42);
+        let input = SeedRankInput {
+            n_offs: 4,
+            fw_sizes: vec![Some(100), Some(2), Some(50), Some(20)],
+            rc_sizes: vec![None, None, None, None],
+        };
+        let ranks = rank_seed_hits(&input, &mut rnd);
+        // All forward; sizes 2, 20, 50, 100 → expected order: offset 1, 3, 2, 0.
+        let sizes: Vec<u32> = ranks
+            .iter()
+            .map(|(i, _)| input.fw_sizes[*i].unwrap())
+            .collect();
+        assert_eq!(sizes, vec![2, 20, 50, 100]);
+    }
+
+    /// Determinism: same seed → same rank order.
+    #[test]
+    fn rank_deterministic() {
+        let run = |seed: u32| {
+            let mut rnd = RandomSource::new(seed);
+            let input = SeedRankInput {
+                n_offs: 5,
+                fw_sizes: vec![Some(10), Some(10), Some(10), Some(5), Some(2)],
+                rc_sizes: vec![Some(7), Some(7), Some(7), Some(3), Some(1)],
+            };
+            rank_seed_hits(&input, &mut rnd)
+        };
+        assert_eq!(run(42), run(42));
+        assert_ne!(run(42), run(43)); // different seed → likely different order on ties
     }
 
     /// Exhaustion: with `maxelt > total elements`, all rows are emitted
