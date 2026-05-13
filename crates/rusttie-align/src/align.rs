@@ -198,15 +198,39 @@ pub fn seed_offsets(read_len: u32, seed_len: u32) -> Vec<u32> {
     seed_offsets_shifted(read_len, seed_len, 0)
 }
 
+/// BT2's paired-end seed-interval boost: `(int)(interval * 1.2 + 0.5)`
+/// when both mates pass the post filter (`bt2_search.cpp:3447`). The C-style
+/// `(int)` truncates (floor for non-negative), so 12*1.2+0.5 = 14.9 → 14.
+pub fn paired_seed_interval(read_len: u32) -> u32 {
+    let i = seed_interval(read_len) as f64;
+    let boosted = i * 1.2 + 0.5;
+    (boosted as u32).max(1)
+}
+
 /// Seed offsets shifted by `shift` chars from the read's left end. Used by
 /// the descent re-seeding logic (`-R`): each retry pass uses a different
 /// shift so the read's true alignment site has a fresh chance to be hit by
 /// a non-repetitive seed.
 pub fn seed_offsets_shifted(read_len: u32, seed_len: u32, shift: u32) -> Vec<u32> {
+    seed_offsets_with_interval(read_len, seed_len, shift, None)
+}
+
+/// Seed offsets with an optional explicit interval (overrides the
+/// default `seed_interval(read_len)`). When an override is supplied we
+/// also skip the "include the final offset" guard — BT2 doesn't do
+/// that; it just iterates `o += interval` and stops, so the BT2-faithful
+/// paired path requires the override to imply BT2's exact offset set.
+pub fn seed_offsets_with_interval(
+    read_len: u32,
+    seed_len: u32,
+    shift: u32,
+    interval_override: Option<u32>,
+) -> Vec<u32> {
     if read_len < seed_len {
         return Vec::new();
     }
-    let interval = seed_interval(read_len);
+    let bt2_mode = interval_override.is_some();
+    let interval = interval_override.unwrap_or_else(|| seed_interval(read_len));
     let last = read_len - seed_len;
     let start = shift % interval.max(1);
     let mut out = Vec::new();
@@ -214,6 +238,10 @@ pub fn seed_offsets_shifted(read_len: u32, seed_len: u32, shift: u32) -> Vec<u32
     while o <= last {
         out.push(o);
         o += interval;
+    }
+    if bt2_mode {
+        // BT2 stops the offset walk here (`aligner_seed.cpp:instantiateSeeds`).
+        return out;
     }
     // Always include the final offset so the right end of the read is covered.
     if out.last().copied() != Some(last) {
@@ -658,15 +686,21 @@ impl PerMateSeedSizes {
 /// Phase 1: collect per-(offset, strand) SA range sizes for one mate.
 /// Pure BWT lookups, no PRNG. Caller can compute uniqueness and decide
 /// mate ordering before phase 2.
+///
+/// `interval_override` lets the caller specify a non-default seed
+/// interval — required for paired-end where BT2 applies a 1.2×
+/// post-filt boost (`bt2_search.cpp:3447`). `None` uses the default
+/// single-end interval from `seed_interval(read_len)`.
 pub(crate) fn collect_seed_sizes(
     idx: &Bt2Index,
     query_fw: &[u8],
     query_rc: &[u8],
     seed_len: u32,
     shift: u32,
+    interval_override: Option<u32>,
 ) -> PerMateSeedSizes {
     let read_len = query_fw.len() as u32;
-    let offsets: Vec<u32> = seed_offsets_shifted(read_len, seed_len, shift)
+    let offsets: Vec<u32> = seed_offsets_with_interval(read_len, seed_len, shift, interval_override)
         .into_iter()
         .collect();
     let n_offs = offsets.len();
@@ -687,7 +721,16 @@ pub(crate) fn collect_seed_sizes(
             fw_sizes[i] = Some(hits);
             fw_ranges[i] = Some((range.lo, range.hi));
         }
-        let seed_rc = &query_rc[off as usize..(off + seed_len) as usize];
+        // BT2 indexes RC seeds at the SAME starting position as the FW
+        // seed, reverse-complemented in place (`sstring.h:1519-1532`
+        // `windowGetDna(fw=false)`): RC seed at depth = compDna(read[depth+len-i-1]).
+        // Equivalently: query_rc reversed and complemented, then sliced
+        // from L-(off+seed_len) to L-off. Our `query_rc` is already
+        // pre-reverse-complemented, so the correct slice is from
+        // (L - off - seed_len) to (L - off).
+        let rc_lo = (read_len - off - seed_len) as usize;
+        let rc_hi = (read_len - off) as usize;
+        let seed_rc = &query_rc[rc_lo..rc_hi];
         if let Some(range) = backward_search(idx, seed_rc)
             && !range.is_empty()
         {
@@ -796,7 +839,7 @@ pub(crate) fn collect_prioritized_bt2_per_mate(
     cap_fired: &mut bool,
     rnd: &mut crate::bt2_random::RandomSource,
 ) {
-    let sizes = collect_seed_sizes(idx, query_fw, query_rc, seed_len, shift);
+    let sizes = collect_seed_sizes(idx, query_fw, query_rc, seed_len, shift, None);
     *total_hits += sizes.total_hits;
     *aligned_seeds += sizes.aligned_seeds;
     rank_and_sample(idx, &sizes, seed_len, seed_hit_cap, out, cap_fired, rnd);

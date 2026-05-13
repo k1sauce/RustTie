@@ -123,6 +123,17 @@ pub fn align_pair_jointly(
     let seed_r1 = gen_rand_seed(&r1_bt2_seq, r1_qual, r1_name, 0);
     let seed_r2 = gen_rand_seed(&r2_bt2_seq, r2_qual, r2_name, 0);
     let mut rnd = RandomSource::new(seed_r1 ^ seed_r2);
+    if std::env::var_os("RUSTTIE_DUMP_RND").is_some() {
+        let name = std::str::from_utf8(r1_name).unwrap_or("?");
+        eprintln!(
+            "[rt-rnd qn={} phase=init seed_r1={} seed_r2={} xor={} last={}]",
+            name,
+            seed_r1,
+            seed_r2,
+            seed_r1 ^ seed_r2,
+            rnd.last(),
+        );
+    }
 
     let r1_strands: [(Strand, &[u8]); 2] = [
         (Strand::Forward, r1_seq),
@@ -224,12 +235,19 @@ pub fn align_pair_jointly(
             // PRNG-consumption order BT2 uses when both mates have hits,
             // critical because rank_seed_hits and the downstream row
             // sampler share a single RandomSource across both mates.
+            // Paired-end seed interval gets BT2's 1.2× boost
+            // (`bt2_search.cpp:3447`). Computed once from R1's length
+            // (mates have the same length in our test corpus; if they
+            // differ each mate gets its own interval).
+            let r1_pair_iv = crate::align::paired_seed_interval(r1_seq.len() as u32);
+            let r2_pair_iv = crate::align::paired_seed_interval(r2_seq.len() as u32);
             let r1_sizes = collect_seed_sizes(
                 idx,
                 r1_seq,
                 r1_rc.as_slice(),
                 DEFAULT_SEED_LEN,
                 shift,
+                Some(r1_pair_iv),
             );
             let r2_sizes = collect_seed_sizes(
                 idx,
@@ -237,21 +255,62 @@ pub fn align_pair_jointly(
                 r2_rc.as_slice(),
                 DEFAULT_SEED_LEN,
                 shift,
+                Some(r2_pair_iv),
             );
             pass_total_hits += r1_sizes.total_hits + r2_sizes.total_hits;
             pass_aligned_seeds += r1_sizes.aligned_seeds + r2_sizes.aligned_seeds;
             // matemap: process mate with higher uniqueness first when
             // both have non-empty hits. Otherwise R1 first.
-            let r2_first = !r1_sizes.is_empty()
-                && !r2_sizes.is_empty()
-                && r2_sizes.uniqueness_factor() > r1_sizes.uniqueness_factor();
+            let r2_first = if std::env::var_os("RUSTTIE_FORCE_R2_FIRST").is_some() {
+                true
+            } else if std::env::var_os("RUSTTIE_FORCE_R1_FIRST").is_some() {
+                false
+            } else {
+                !r1_sizes.is_empty()
+                    && !r2_sizes.is_empty()
+                    && r2_sizes.uniqueness_factor() > r1_sizes.uniqueness_factor()
+            };
+            if std::env::var_os("RUSTTIE_DUMP_RND").is_some() {
+                let name = std::str::from_utf8(r1_name).unwrap_or("?");
+                eprintln!(
+                    "[rt-rnd qn={} phase=matemap r2_first={} r1_uniq={} r2_uniq={}]",
+                    name,
+                    r2_first,
+                    r1_sizes.uniqueness_factor(),
+                    r2_sizes.uniqueness_factor(),
+                );
+            }
             let order: [(AnchorMate, &_); 2] = if r2_first {
                 [(AnchorMate::R2, &r2_sizes), (AnchorMate::R1, &r1_sizes)]
             } else {
                 [(AnchorMate::R1, &r1_sizes), (AnchorMate::R2, &r2_sizes)]
             };
+            let dump_rnd = std::env::var_os("RUSTTIE_DUMP_RND").is_some();
             for (mate, sizes) in order.iter() {
                 buf.clear();
+                if dump_rnd {
+                    let name = std::str::from_utf8(r1_name).unwrap_or("?");
+                    // mate-id matches BT2: matemap[0]=processed first
+                    let mate_id = match mate {
+                        AnchorMate::R1 => 0,
+                        AnchorMate::R2 => 1,
+                    };
+                    // Per-(offset, strand) sizes — diff against bt2-sz lines.
+                    for (i, off) in sizes.offsets.iter().enumerate() {
+                        let nfw = sizes.fw_sizes[i].unwrap_or(0);
+                        let nrc = sizes.rc_sizes[i].unwrap_or(0);
+                        eprintln!(
+                            "[rt-sz qn={} mate={} off_idx={} off={} fw={} rc={}]",
+                            name, mate_id, i, off, nfw, nrc
+                        );
+                    }
+                    eprintln!(
+                        "[rt-rnd qn={} phase=pre_rank mate={} last={}]",
+                        name,
+                        mate_id,
+                        rnd.last()
+                    );
+                }
                 rank_and_sample(
                     idx,
                     sizes,
@@ -261,6 +320,19 @@ pub fn align_pair_jointly(
                     &mut cap_fired,
                     &mut rnd,
                 );
+                if dump_rnd {
+                    let name = std::str::from_utf8(r1_name).unwrap_or("?");
+                    let mate_id = match mate {
+                        AnchorMate::R1 => 0,
+                        AnchorMate::R2 => 1,
+                    };
+                    eprintln!(
+                        "[rt-rnd qn={} phase=post_rank mate={} last={}]",
+                        name,
+                        mate_id,
+                        rnd.last()
+                    );
+                }
                 for c in buf.drain(..) {
                     pass_cands.push(JointCandidate { mate: *mate, cand: c });
                 }

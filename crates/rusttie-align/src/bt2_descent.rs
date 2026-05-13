@@ -70,16 +70,44 @@ pub fn rank_seed_hits(
         return out;
     }
 
+    let dump = std::env::var_os("RUSTTIE_DUMP_RANK").is_some();
     while out.len() < total {
         let mut min_sz = u32::MAX;
         let mut min_idx: usize = 0;
         let mut min_fw = true;
+        let pre_last = rnd.last();
         let rb = rnd.next_bool();
+        let post_bool_last = rnd.last();
+        if dump {
+            eprintln!(
+                "[rt-rank step={} pre_last={} rb={} post_bool_last={}]",
+                out.len(),
+                pre_last,
+                rb as u32,
+                post_bool_last
+            );
+        }
         for fwi in 0..2 {
             let fw = fwi == (if rb { 1 } else { 0 });
             let sizes = if fw { &input.fw_sizes } else { &input.rc_sizes };
             let sorted = if fw { &sorted_fw } else { &sorted_rc };
-            let i_start = (rnd.next_u32() as usize) % n;
+            let pre_u32_last = rnd.last();
+            let nu = rnd.next_u32();
+            let post_u32_last = rnd.last();
+            let i_start = (nu as usize) % n;
+            if dump {
+                eprintln!(
+                    "[rt-rank step={} fwi={} fw={} pre_u32_last={} nu={} post_u32_last={} n={} i_start={}]",
+                    out.len(),
+                    fwi,
+                    fw,
+                    pre_u32_last,
+                    nu,
+                    post_u32_last,
+                    n,
+                    i_start
+                );
+            }
             let mut i = i_start;
             for _ in 0..n {
                 if let Some(sz) = sizes[i]
@@ -95,6 +123,14 @@ pub fn rank_seed_hits(
             }
         }
         debug_assert!(min_sz != u32::MAX, "should always find a remaining seed");
+        if dump {
+            eprintln!(
+                "[rt-rank step={} picked={{idx={},fw={}}}]",
+                out.len(),
+                min_idx,
+                min_fw
+            );
+        }
         if min_fw {
             sorted_fw[min_idx] = true;
         } else {

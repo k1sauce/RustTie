@@ -37,6 +37,12 @@ impl RandomSource {
         Self { last: seed, last_off: 30 }
     }
 
+    /// Current `last` state — exposed for byte-exact PRNG-trace debugging
+    /// against BT2's `RandomSource::currentLast()`.
+    pub fn last(&self) -> u32 {
+        self.last
+    }
+
     pub fn next_u32(&mut self) -> u32 {
         self.last = Self::A.wrapping_mul(self.last).wrapping_add(Self::C);
         let mut ret = self.last >> 16;
