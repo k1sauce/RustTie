@@ -653,7 +653,7 @@ pub(crate) fn score_candidate_ungapped(
 /// when Phase 1 finds zero alignments for the whole read, so a false
 /// positive here at least doesn't waste SW work behind a known-good
 /// ungapped hit.
-fn score_candidate_gapped(
+pub(crate) fn score_candidate_gapped(
     refs: &BitPairReference,
     ref_id: u32,
     seed_ref_off: u32,

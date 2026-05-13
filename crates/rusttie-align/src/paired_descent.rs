@@ -31,7 +31,8 @@ use rusttie_index::{Bt2Index, BitPairReference};
 
 use crate::align::{
     DEFAULT_SEED_LEN, PrioritizedCandidate, REPETITIVE_HITS_THRESHOLD, Scoring, Strand,
-    collect_prioritized, mate_rescue, score_candidate_ungapped, seed_interval,
+    collect_prioritized, mate_rescue, score_candidate_gapped, score_candidate_ungapped,
+    seed_interval,
 };
 use crate::paired::{FRAG_LEN_MAX, FRAG_LEN_MIN, PairCandidate};
 use crate::revcomp::reverse_complement;
@@ -116,10 +117,40 @@ pub fn align_pair_jointly(
     let mut aln_seen_r2: HashSet<(u32, u32, Strand)> = HashSet::new();
     let mut seen_pairs: HashSet<(u32, u32, Strand, u32, Strand)> = HashSet::new();
 
+    // Mate-rescue redundancy filter: per-(ref_id, anchor_strand) sorted list
+    // of anchor ref_offs that already had a mate-rescue attempt. The
+    // rescue window for an FR anchor spans `frag_max` bp; two anchors
+    // within `frag_max` cover overlapping windows and one rescue is
+    // sufficient. This is the structural cost driver — at high
+    // `--seed-hit-cap` / `-D` we extend hundreds of anchors per read, and
+    // running SW mate-rescue on each was driving the 47s wall time.
+    // Skipping redundant windows is the analog of BT2's `redMate1_` /
+    // `redMate2_` per-cell dedup applied at the *rescue-window* layer
+    // (where it actually saves work for ungapped anchors).
+    // Hard cap on total mate-rescue attempts per read (across both mates,
+    // across passes). Mirrors BT2's `maxDp` knob in `extendSeedsPaired`.
+    // Without it, hi-cap settings spend ~50× the wall time of the
+    // default-cap path doing SW on every successfully-extended anchor
+    // that lands at a distinct genomic locus.
+    //
+    // 50 is the knee from the chr22 sweep — MAPQ plateaus at this value
+    // (matches K=200's 92.6%) while wall time keeps growing past it.
+    // Override at runtime with `RUSTTIE_MAX_RESCUE=<n>` for tuning.
+    let max_rescue_attempts: usize = std::env::var("RUSTTIE_MAX_RESCUE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    let mut rescue_attempts: usize = 0;
+
     let mut r1_best: i32 = i32::MIN;
     let mut r1_secbest: i32 = i32::MIN;
     let mut r2_best: i32 = i32::MIN;
     let mut r2_secbest: i32 = i32::MIN;
+
+    // Accumulator for cross-pass Phase 2 (gapped SW) fallback. Mirrors
+    // `align_read_with_descent`'s pattern: only iterate gapped if Phase 1
+    // ungapped found nothing for both mates.
+    let mut all_cands: Vec<JointCandidate> = Vec::new();
 
     // BT2 `-R` re-seeding: each pass shifts seed offsets so a fresh set
     // of seeds covers the read. Mirrors `align_read_with_descent` for
@@ -258,7 +289,19 @@ pub fn align_pair_jointly(
             }
 
             // Mate-rescue the OTHER mate (BT2's `extendSeedsPaired`
-            // inner mate-find step).
+            // inner mate-find step). Bounded by `MAX_RESCUE_ATTEMPTS` so
+            // hi-cap settings don't pay ~50× the wall time running SW on
+            // every successfully-extended anchor at a distinct repetitive
+            // locus. A window-overlap dedup was tried but cut into
+            // legitimately-distinct pair candidates — anchors A and B
+            // within `frag_max` of each other can still produce two
+            // distinct `(A, rescued)` and `(B, rescued)` pair candidates
+            // even when their rescue *windows* overlap.
+            if rescue_attempts >= max_rescue_attempts {
+                continue;
+            }
+            rescue_attempts += 1;
+
             let (other_seq, other_qual, other_rc, other_qual_rev) = match jc.mate {
                 AnchorMate::R1 => (r2_seq, r2_qual, r2_rc.as_slice(), r2_qual_rev.as_slice()),
                 AnchorMate::R2 => (r1_seq, r1_qual, r1_rc.as_slice(), r1_qual_rev.as_slice()),
@@ -321,6 +364,10 @@ pub fn align_pair_jointly(
             // it's a re-discovery, not a missed extension.
         }
 
+        // Save this pass's candidates so the Phase 2 gapped fallback can
+        // re-iterate them with SW DP if Phase 1 found nothing.
+        all_cands.extend(pass_cands);
+
         // BT2's re-seed gate: continue iterating passes only if we don't
         // already have a non-repetitive set of paired hits. Use the same
         // threshold as `align_read_with_descent` for consistency.
@@ -332,6 +379,111 @@ pub fn align_pair_jointly(
         let repetitive = avg_hits > REPETITIVE_HITS_THRESHOLD as u64;
         if !out.pair_pool.is_empty() && !repetitive {
             break;
+        }
+    }
+
+    // Phase 2 (SW rescue): if Phase 1 found nothing for either mate, try
+    // gapped extension on every collected candidate. Handles indel reads
+    // where ungapped Hamming can't score. Mirrors
+    // `align_read_with_descent`'s Phase 2 logic.
+    if out.r1_alns.is_empty() && out.r2_alns.is_empty() {
+        for jc in &all_cands {
+            let (anchor_seq, anchor_qual, anchor_smin) = match (jc.mate, jc.cand.strand) {
+                (AnchorMate::R1, Strand::Forward) => (r1_seq, r1_qual, r1_smin),
+                (AnchorMate::R1, Strand::Reverse) => {
+                    (r1_rc.as_slice(), r1_qual_rev.as_slice(), r1_smin)
+                }
+                (AnchorMate::R2, Strand::Forward) => (r2_seq, r2_qual, r2_smin),
+                (AnchorMate::R2, Strand::Reverse) => {
+                    (r2_rc.as_slice(), r2_qual_rev.as_slice(), r2_smin)
+                }
+            };
+            let Some(anchor_aln) = score_candidate_gapped(
+                refs,
+                jc.cand.ref_id,
+                jc.cand.ref_off,
+                anchor_seq,
+                anchor_qual,
+                jc.cand.strand,
+                scoring,
+            ) else {
+                continue;
+            };
+            if anchor_aln.score < anchor_smin {
+                continue;
+            }
+
+            let aln_key = (anchor_aln.ref_id, anchor_aln.ref_off, anchor_aln.strand);
+            match jc.mate {
+                AnchorMate::R1 => {
+                    update_score_window(anchor_aln.score, &mut r1_best, &mut r1_secbest);
+                    if aln_seen_r1.insert(aln_key) {
+                        out.r1_alns.push(anchor_aln.clone());
+                    }
+                }
+                AnchorMate::R2 => {
+                    update_score_window(anchor_aln.score, &mut r2_best, &mut r2_secbest);
+                    if aln_seen_r2.insert(aln_key) {
+                        out.r2_alns.push(anchor_aln.clone());
+                    }
+                }
+            }
+
+            // Also attempt mate-rescue from this gapped anchor — gives a
+            // pair candidate for indel-only reads. Reuses the rescue cap.
+            if rescue_attempts >= max_rescue_attempts {
+                continue;
+            }
+            rescue_attempts += 1;
+            let (other_seq, other_qual, other_rc, other_qual_rev) = match jc.mate {
+                AnchorMate::R1 => (r2_seq, r2_qual, r2_rc.as_slice(), r2_qual_rev.as_slice()),
+                AnchorMate::R2 => (r1_seq, r1_qual, r1_rc.as_slice(), r1_qual_rev.as_slice()),
+            };
+            let Some(rescued) = mate_rescue(
+                refs,
+                &anchor_aln,
+                other_seq,
+                other_qual,
+                other_rc,
+                other_qual_rev,
+                scoring,
+                FRAG_LEN_MIN,
+                FRAG_LEN_MAX,
+            ) else {
+                continue;
+            };
+            match jc.mate {
+                AnchorMate::R1 => {
+                    let key = (rescued.ref_id, rescued.ref_off, rescued.strand);
+                    if aln_seen_r2.insert(key) {
+                        out.r2_alns.push(rescued.clone());
+                    }
+                    update_score_window(rescued.score, &mut r2_best, &mut r2_secbest);
+                }
+                AnchorMate::R2 => {
+                    let key = (rescued.ref_id, rescued.ref_off, rescued.strand);
+                    if aln_seen_r1.insert(key) {
+                        out.r1_alns.push(rescued.clone());
+                    }
+                    update_score_window(rescued.score, &mut r1_best, &mut r1_secbest);
+                }
+            }
+            let (r1_aln, r2_aln) = match jc.mate {
+                AnchorMate::R1 => (anchor_aln, rescued),
+                AnchorMate::R2 => (rescued, anchor_aln),
+            };
+            let pair_key = (
+                r1_aln.ref_id,
+                r1_aln.ref_off,
+                r1_aln.strand,
+                r2_aln.ref_off,
+                r2_aln.strand,
+            );
+            if seen_pairs.insert(pair_key)
+                && let Some(cand) = PairCandidate::try_new(r1_aln, r2_aln)
+            {
+                out.pair_pool.push(cand);
+            }
         }
     }
 

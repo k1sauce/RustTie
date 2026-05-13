@@ -130,6 +130,18 @@ pub struct Cli {
     /// large `-k`.
     #[arg(short = 'a', long = "all")]
     pub all: bool,
+
+    /// Experimental: use joint paired-mode descent for pair-candidate
+    /// generation. Aligns both mates' seeds interleaved in a single
+    /// priority queue and emits pair candidates during joint extension —
+    /// a partial port of BT2's `extendSeedsPaired`
+    /// (`vendor/bowtie2/aligner_sw_driver.cpp:1582`). Closes a portion of
+    /// the MAPQ gap on repetitive reads at the cost of higher wall time
+    /// (~3× at default, ~5× at `--seed-hit-cap 1000 -D 1000`). On chr22
+    /// validation: 92.6% MAPQ at default, 92.8% at hi-cap (vs 92.3% and
+    /// 92.6% for the independent-extend + top-K-rescue path).
+    #[arg(long = "joint-descent")]
+    pub joint_descent: bool,
 }
 
 fn parse_pair_i32(s: &str, name: &str) -> Result<(i32, i32)> {
@@ -227,6 +239,7 @@ pub fn run(cli: Cli) -> Result<()> {
     let descent_budget = cli.descent_budget;
     let descent_reseed = cli.descent_reseed;
     let mate_rescue_top_k = cli.mate_rescue_top_k;
+    let joint_descent = cli.joint_descent;
     let read_group = build_read_group(&cli)?;
     // -k <int> / -a: how many alignments to report per read (or per pair).
     // -a wins over -k (clap rejects both) and means "all valid".
@@ -281,6 +294,7 @@ pub fn run(cli: Cli) -> Result<()> {
                     descent_budget,
                     descent_reseed,
                     mate_rescue_top_k,
+                    joint_descent,
                     report_k,
                     read_group.clone(),
                     &mut r1,
@@ -340,6 +354,7 @@ pub fn run(cli: Cli) -> Result<()> {
                 descent_budget,
                 descent_reseed,
                 mate_rescue_top_k,
+                joint_descent,
                 report_k,
                 read_group,
                 &mut r1,
@@ -583,6 +598,7 @@ fn run_paired<R: std::io::Read, W: Write>(
     descent_budget: u32,
     descent_reseed: u32,
     mate_rescue_top_k: u32,
+    joint_descent: bool,
     report_k: u32,
     read_group: Option<ReadGroup>,
     r1_reader: &mut FastqReader<R>,
@@ -618,16 +634,12 @@ fn run_paired<R: std::io::Read, W: Write>(
         if batch1.is_empty() {
             break;
         }
-        let joint_descent = std::env::var_os("RUSTTIE_JOINT_DESCENT").is_some();
         let outcomes: Vec<PairOutcome> = batch1
             .par_iter()
             .zip(batch2.par_iter())
             .map(|(r1, r2)| {
                 if joint_descent {
-                    // Experimental joint paired-descent path. Generates
-                    // the pair pool during simultaneous bilateral seed
-                    // extension — see crate `paired_descent` module.
-                    let jr = align_pair_jointly(
+                    let mut jr = align_pair_jointly(
                         idx,
                         refs,
                         &r1.seq,
@@ -639,6 +651,19 @@ fn run_paired<R: std::io::Read, W: Write>(
                         descent_budget,
                         descent_reseed,
                     );
+                    // Ceiling-test cap: BT2's default-mode pool is mean 1.2,
+                    // mostly 1 or 2 entries (see rusttie.md Phase 0). Capping
+                    // our pool to match the distribution moves MAPQ even if
+                    // the specific alternate we keep differs from BT2's.
+                    // Override at runtime with RUSTTIE_POOL_LIMIT.
+                    let pool_limit: usize = std::env::var("RUSTTIE_POOL_LIMIT")
+                        .ok()
+                        .and_then(|s| s.parse().ok())
+                        .unwrap_or(usize::MAX);
+                    if jr.pair_pool.len() > pool_limit {
+                        jr.pair_pool.sort_by(|a, b| b.score_sum.cmp(&a.score_sum));
+                        jr.pair_pool.truncate(pool_limit);
+                    }
                     return classify_pair_set(
                         &jr.pair_pool,
                         &jr.r1_alns,

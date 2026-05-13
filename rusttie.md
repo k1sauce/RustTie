@@ -532,3 +532,72 @@ If RustTie diverges, BT2 wins by definition until proven otherwise. Disagreement
 - Do we ship our own `bowtie2-inspect` equivalent in MVP or defer? (Lean: defer.)
 - Do we support BAM output from day one or start SAM-only? (Lean: SAM-only in MVP, BAM in phase 3 — `noodles-bam` makes it cheap.)
 - ~~Threading model for read processing~~ — resolved: `rayon` `par_iter` over read chunks, single-producer / single-consumer for FASTQ in / SAM out. Async ruled out (CPU-bound workload). Implementation deferred to Phase 3.
+
+---
+
+## Phase 0 root-cause analysis (closing the ~6% MAPQ gap)
+
+Tracked in GitHub #2. The remaining MAPQ disagreement vs BT2 on chr22 (~6%) is **not** a precision bug. Confirmed by instrumenting `vendor/bowtie2/aln_sink.cpp:1413` (`AlnSinkWrap::report()`) to log every paired pair candidate added to BT2's `rs1_`/`rs2_` parallel lists.
+
+### Methodology
+
+1. Built the vendored BT2 from source (`devbox` shell, with explicit `-I` paths for zlib + third_party/simde): produces `vendor/bowtie2/bowtie2-align-s`.
+2. Patched `report()` to `fprintf(stderr, "[bt2-pool ...]")` on every call with `paired=true`.
+3. Ran on the chr22 corpus + on three picked `rt=6 bt=12` AS-agree reads.
+
+### Findings
+
+Pool-size distribution across the 10k-read chr22 corpus:
+
+| pool size | BT2 default | rt `--joint-descent` |
+|---|---|---|
+| 1 | 8142 (81.4%) | 8213 (82.1%) |
+| 2 | 1542 (15.4%) | 566 (5.7%) |
+| 3+ | 316 (3.2%) | ~1221 (12.2%) |
+| mean | ~1.2 | 2.83 |
+| max | 51 (= mhits+1) | 50 (= `MAX_RESCUE_ATTEMPTS`) |
+
+BT2's default-mode pool has a *very tight* size distribution — usually 1 entry, rarely 2, almost never more. The mhits=50 cap exists in `unique.h` but BT2's paired-descent traversal **stops well short of it** because:
+
+- `ReportingState::foundConcordant()` (`aln_sink.cpp:73`) calls `areDone(nconcord_, doneConcord_, exitConcord_)`. With default `khits=1` and `!mhitsSet()` (no `-M` flag set), `areDone` sets `doneConcord_ = true` after the **first** concordant pair.
+- The driver's outer loop unwinds across remaining seed anchors after `doneConcord_`, occasionally emitting a few more pairs before fully bailing — but typically 0–1 more.
+
+So BT2's `bestUnchosenCScore` input to MAPQ is whichever pair happens to be reported *second* during the paired-descent traversal — **not** the cartesian-second-best of all valid concordant pairs.
+
+### Direct evidence (read 22_14251625_14251966)
+
+BT2 default-mode pool, in **discovery order**:
+1. `r1=(off=13765389, fw=R, score=-20)  r2=(off=13765631, fw=F, score=0)  sum=-20`
+2. `r1=(off=14251624, fw=R, score=-4)   r2=(off=14251866, fw=F, score=0)  sum=-4`  ← true primary
+
+After `selectByScore` sorts by sum descending: `[-4, -20]` → primary = -4, secbest = -20, bestdiff = 16. MAPQ = 12.
+
+BT2 `-a` mode pool for the same read: **816 entries**, sorted top: `[-4, -16, -16, ..., -20, ...]`. cartesian-second-best = -16, bestdiff = 12. MAPQ = 6.
+
+Our `--joint-descent` pool: 30 entries, sorted top: `[-4, -16, -20, ...]`. Same cartesian-second-best as BT2 -a. Same MAPQ = 6 as BT2 -a.
+
+So **rusttie matches BT2 in `-a` mode but diverges in default mode**. The divergence is BT2's traversal-order short-circuit in default mode.
+
+### Implications for the port plan
+
+This is the smoking gun #2 was looking for. The fix is **not** more candidate generation (we already have enough). The fix is to **emulate BT2's specific traversal order so our "first 1–2 reports" land on the same pairs BT2's first 1–2 reports do**.
+
+That requires Phase 1 (`GroupWalk`) and Phase 2 (`RedundantAlns` + paired anchor iteration matching `extendSeedsPaired`). Both are still needed; the dependency holds.
+
+A short-term ceiling test: if we cap our pool to size 2 (matching BT2's distribution), MAPQ should improve — but the *specific* pair chosen will probably be wrong (we have different traversal order), so the gain will be modest. Worth measuring as a sanity check before committing to Phase 1.
+
+### Reproducing
+
+```bash
+# Build instrumented BT2
+cd vendor/bowtie2 && git submodule update --init third_party/simde
+ZLIB_INC=/nix/store/3wwgwhqvc5anikb7i3vxnggpnsc8n31v-zlib-1.3.1-dev/include
+ZLIB_LIB=/nix/store/7c0c2fbdxhn649hhd3y70rq3804s7jri-zlib-1.3.2/lib
+make CPPFLAGS="-I$ZLIB_INC -Ithird_party" LDFLAGS="-L$ZLIB_LIB" bowtie2-align-s
+
+# Run on chr22
+./bowtie2 -p 1 -x /tmp/rusttie_chr22/bt_chr22 \
+    -1 /tmp/rusttie_chr22/reads_R1.fq -2 /tmp/rusttie_chr22/reads_R2.fq \
+    -S /tmp/bt_full.sam 2> /tmp/bt_full.log
+grep -c "^\[bt2-pool" /tmp/bt_full.log  # total pool events
+```

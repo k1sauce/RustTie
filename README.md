@@ -42,7 +42,7 @@ end-to-end pipeline matches Bowtie 2 closely enough for diffing experiments
 | CIGAR agreement | 100.0% |
 | AS / NM agreement | 99.6% |
 | MD agreement | 99.3% |
-| MAPQ agreement | 92.3% |
+| MAPQ agreement | 93.9% |
 | Wall time (`-p 8`) | 0.8s (BT2: 0.48s) |
 
 **Real-data** (NA12878 mitochondrial paired-end Illumina reads from
@@ -63,28 +63,48 @@ MAPQ-disagreement breakdown via [`scripts/mapq_diff.py`](./scripts/mapq_diff.py)
 
 ### Known MAPQ gap
 
-The remaining ~7.7% MAPQ disagreement on the synthetic corpus is
-structural, not a tuning issue. It comes from BT2's paired-mode descent
-emitting pair candidates from **joint bilateral seed extension**: each
-entry in BT2's `rs1_`/`rs2_` parallel lists
+The default-path MAPQ disagreement on the synthetic corpus is structural,
+not a tuning issue. It comes from BT2's paired-mode descent emitting pair
+candidates from **joint bilateral seed extension**: each entry in BT2's
+`rs1_`/`rs2_` parallel lists
 ([`aln_sink.cpp:1413`](./vendor/bowtie2/aln_sink.cpp)) is one `(r1, r2)`
 tuple produced together when both mates extended concordantly from
-related seeds. RustTie aligns each mate independently and then mate-rescues
-from top-K anchors, so our pair pool is missing the close alternates BT2
-finds via joint extension — alternates that often don't even appear in
-BT2's output SAM but affect the `bestUnchosenCScore` input to MAPQ
-([`unique.h:234`](./vendor/bowtie2/unique.h)). Closing this requires
-porting BT2's `extendSeedsPaired` driver
-([`aligner_sw_driver.cpp:1582`](./vendor/bowtie2/aligner_sw_driver.cpp));
-that work is tracked but not yet done. See [`rusttie.md`](./rusttie.md)
-for the full per-phase development log.
+related seeds. RustTie's default path aligns each mate independently and
+then mate-rescues from top-K anchors, so our pair pool is missing the
+close alternates BT2 finds via joint extension — alternates that often
+don't even appear in BT2's output SAM but affect the
+`bestUnchosenCScore` input to MAPQ
+([`unique.h:234`](./vendor/bowtie2/unique.h)).
+
+`--joint-descent` is an experimental opt-in path that's a partial port of
+BT2's `extendSeedsPaired`
+([`aligner_sw_driver.cpp:1582`](./vendor/bowtie2/aligner_sw_driver.cpp)).
+It interleaves seed anchors from both mates in a single priority queue and
+mate-rescues during extension, emitting pair candidates to a bounded pool
+(default 50, matching BT2's `mhits+1`). Measured impact on chr22:
+
+| Setting | MAPQ | Wall (`-p 8`) |
+|---|---|---|
+| default | 93.9% | 0.8s |
+| `--seed-hit-cap 1000 -D 1000` | **94.2%** | 1.6s |
+| `--joint-descent` | 94.0% | 2.4s |
+| `--joint-descent --seed-hit-cap 1000 -D 1000` | 94.1% | 6.8s |
+
+After two precision fixes that surfaced this run (`score_min` C-style
+truncation + bin thresholds using `(double)0.1f`-style f32→f64 casts to
+match BT2's `unique.h`), the headline gap is now ~6% — both baseline and
+`--joint-descent` are within 0.3pp of each other. The joint-descent
+flag's structural advantage (pair candidates from joint extension) shows
+up most clearly in the `AS-agree` disagreement count: 1142 at baseline
+default vs 1122 at `--joint-descent` default.
+See [`rusttie.md`](./rusttie.md) for the full per-phase development log.
 
 ## Quick start
 
 ### Build
 
 ```bash
-# Requires Rust 1.85 (edition 2024). The sais-rs dependency wants nightly;
+# Requires Rust 1.85 (edition 2024). The sais-rs (https://crates.io/crates/sais-rs) dependency wants nightly;
 # pin via rust-toolchain.toml in this repo.
 cargo build --release
 ```
@@ -133,6 +153,7 @@ the same meaning and defaults as upstream.
 | `-R` / `--descent-reseed` | Max re-seedings on repetitive seeds (default 2) |
 | `--mate-rescue <K>` | Mate-rescue from top-K anchors per side (default 3, 0 disables) |
 | `--seed-hit-cap` | Per-seed hit cap (default 50; tuning knob) |
+| `--joint-descent` | Experimental: joint paired-mode descent — see [Known MAPQ gap](#known-mapq-gap) |
 | `--mp MX,MN` | Mismatch penalty bounds |
 | `--rdg O,E` | Read-gap open/extend |
 | `--rfg O,E` | Reference-gap open/extend |
