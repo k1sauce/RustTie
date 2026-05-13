@@ -186,7 +186,10 @@ impl Random1toN {
 /// `--seed` (default 0). Port of `genRandSeed` in `pat.cpp:45-82`.
 ///
 /// `seq` must be in BT2's 0..=4 encoding (A=0, C=1, G=2, T=3, N=4).
-/// `qual` is the raw Phred quality byte string (NOT Phred+33 ASCII).
+/// `qual` is the quality byte string as BT2 stores it — typically the
+/// raw FASTQ bytes (Phred+33 ASCII). BT2's `genRandSeed` reads
+/// `(int)qual[i]` directly, so whatever bytes are in BT2's Read.qual
+/// flow into the seed. Don't pre-subtract 33.
 /// `name` stops at the first `/` (mate-suffix delimiter); supply the
 /// raw name and let this function trim.
 ///

@@ -97,17 +97,19 @@ pub fn align_pair_jointly(
     let r1_smin = scoring.score_min(r1_seq.len() as u32);
     let r2_smin = scoring.score_min(r2_seq.len() as u32);
 
-    // BT2-faithful per-read PRNG seed (paired: XOR of both mates' seeds).
-    // The PRNG is used by the optional bt2_descent path inside
-    // `collect_prioritized` to sample large SA ranges in BT2's order.
-    // Qname is not threaded down here yet — use empty name; the seed
-    // still depends on sequence + quality which is the dominant input.
+    // BT2-faithful per-read PRNG seed (paired: XOR of both mates' seeds,
+    // matching `bt2_search.cpp:3437`). The PRNG drives BT2-faithful
+    // SA-range sampling in `collect_prioritized`'s bt2_descent path.
+    //
+    // BT2's `genRandSeed` reads qualities as raw ASCII bytes (Phred+33),
+    // *not* raw Phred values — see `pat.cpp:65-69`:
+    //     int p = (int)qual[i];  // ASCII byte
+    // Sequence goes through `ascii_to_bt2_base` (0=A, 1=C, 2=G, 3=T, 4=N)
+    // to match BTDnaString's encoding.
     let r1_bt2_seq: Vec<u8> = r1_seq.iter().map(|&b| ascii_to_bt2_base(b)).collect();
     let r2_bt2_seq: Vec<u8> = r2_seq.iter().map(|&b| ascii_to_bt2_base(b)).collect();
-    let r1_qual_raw: Vec<u8> = r1_qual.iter().map(|&q| q.saturating_sub(33)).collect();
-    let r2_qual_raw: Vec<u8> = r2_qual.iter().map(|&q| q.saturating_sub(33)).collect();
-    let seed_r1 = gen_rand_seed(&r1_bt2_seq, &r1_qual_raw, r1_name, 0);
-    let seed_r2 = gen_rand_seed(&r2_bt2_seq, &r2_qual_raw, r2_name, 0);
+    let seed_r1 = gen_rand_seed(&r1_bt2_seq, r1_qual, r1_name, 0);
+    let seed_r2 = gen_rand_seed(&r2_bt2_seq, r2_qual, r2_name, 0);
     let mut rnd = RandomSource::new(seed_r1 ^ seed_r2);
 
     let r1_strands: [(Strand, &[u8]); 2] = [
