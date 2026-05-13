@@ -601,3 +601,50 @@ make CPPFLAGS="-I$ZLIB_INC -Ithird_party" LDFLAGS="-L$ZLIB_LIB" bowtie2-align-s
     -S /tmp/bt_full.sam 2> /tmp/bt_full.log
 grep -c "^\[bt2-pool" /tmp/bt_full.log  # total pool events
 ```
+
+---
+
+## Phase 1 milestone (in progress, GH #3): bt2_descent path lands first result
+
+After Phase 0 confirmed BT2's traversal-order short-circuit as the root cause of the residual MAPQ gap, Phase 1 has shipped the foundational primitives and a first integration:
+
+### Building blocks (all byte-exact validated against compiled BT2)
+
+* `bt2_random::RandomSource` — BT2's LCG (`random_source.h:34-61`), constants `a=1664525, c=1013904223`, two interleaved steps per `next_u32`.
+* `bt2_random::Random1toN` — without-replacement sampler (`random_util.h:32-160`). Swap-list mode for `n < 128`, seen-list with conversion threshold otherwise.
+* `bt2_random::RowSampler` — weighted bin selection (`aligner_sw_driver.h:179-256`). Weights = `(extended_len ^ lensq) / (range_size ^ szsq)`.
+* `bt2_random::gen_rand_seed` — per-read seed derivation (`pat.cpp:45-82`). Inputs: read sequence (BT2 0..=4 encoded), qualities (raw Phred), name, global seed.
+
+All four have byte-exact regression tests pinned to output captured from a compiled BT2 binary (see `/tmp/bt2_rng_test.cpp` in the build environment).
+
+### Algorithm (`bt2_descent::prioritize_sa_tups_rands`)
+
+Port of `SwDriver::prioritizeSATupsRands` (`aligner_sw_driver.cpp:492-738`). Two-phase: smalls processed exhaustively in size-ascending order; large ranges sampled one row at a time via `RowSampler` + per-range `Random1toN`.
+
+Unit tests cover smalls-only, large-range uniqueness, mixed, determinism, exhaustion.
+
+### Integration (env-gated)
+
+`align::collect_prioritized` gains an optional `&mut RandomSource` parameter. When `RUSTTIE_BT2_DESCENT=1` env var is set AND a PRNG is threaded in, the function routes through the BT2-faithful sampling path instead of the legacy cap-and-skip strategy. `paired_descent::align_pair_jointly` derives the per-read seed via `gen_rand_seed(r1) ^ gen_rand_seed(r2)` matching BT2's `bt2_search.cpp:3437`.
+
+### Measured impact (chr22 synthetic)
+
+| Setting | MAPQ | mapped | wall (`-p 8`) |
+|---|---|---|---|
+| `--joint-descent` (baseline) | 94.0% | 19,983 | 2.7s |
+| `--joint-descent` + `RUSTTIE_BT2_DESCENT=1` | **94.3%** | **19,998** | 2.9s |
+| `--joint-descent --seed-hit-cap 1000 -D 1000` (brute-force) | 94.1% | 20,000 | 6.9s |
+| `--joint-descent --seed-hit-cap 1000 -D 1000 RUSTTIE_BT2_DESCENT=1` | 94.1% | 20,000 | 7.8s |
+
+Key finding: **BT2_DESCENT at default settings (94.3%) beats brute-force hi-cap (94.1%)** at less than half the wall time. The BT2-faithful algorithm is structurally more efficient because it samples large ranges instead of skipping or enumerating them.
+
+AS-disagree drops 69 → 36 (chosen alignment matches BT2 in 33 more reads); AS-agree drops 1122 → 1112; records mapped +15 (BT2-faithful sampling recovers reads our cap was discarding).
+
+### Still pending in Phase 1
+
+* `doExtend`: per-seed neighboring-base extension to compute `RowSampler` weights more accurately. Currently we pass `nlex=nrex=0`, so weights default to `1 / range_size^2` — already favors smaller ranges but not extension-aware.
+* Covered-seed filtering: `ExtendRange` tracking that skips a seed if a previously-extended seed covers its read positions with a smaller SA range.
+* CLI flag promotion: turn `RUSTTIE_BT2_DESCENT` env var into a proper `--bt2-descent` flag, eventually default-on.
+* Integration with the non-joint path (`align_read_with_descent`) so single-end alignment also benefits.
+
+These are incremental refinements on top of the current foundation; each is small relative to the primitives + algorithm port that's now done.
