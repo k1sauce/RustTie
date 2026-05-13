@@ -165,6 +165,13 @@ pub fn align_pair_jointly(
     let mut r2_best: i32 = i32::MIN;
     let mut r2_secbest: i32 = i32::MIN;
 
+    // BT2-faithful per-anchor-mate pair caps (RUSTTIE_PAIRPASS, see
+    // emit-site comment). Tracks whether each anchor mate has already
+    // contributed one pair to the pool — BT2's two extendSeedsPaired
+    // calls each emit at most one report.
+    let mut pair_from_r1_anchor = false;
+    let mut pair_from_r2_anchor = false;
+
     // Accumulator for cross-pass Phase 2 (gapped SW) fallback. Mirrors
     // `align_read_with_descent`'s pattern: only iterate gapped if Phase 1
     // ungapped found nothing for both mates.
@@ -377,17 +384,49 @@ pub fn align_pair_jointly(
             if seen_pairs.insert(pair_key)
                 && let Some(cand) = PairCandidate::try_new(r1_aln, r2_aln)
             {
+                let anchor_was_r1 = matches!(jc.mate, AnchorMate::R1);
+                // BT2 calls extendSeedsPaired *twice* per read (once
+                // with anchor1=true, once with anchor1=false), each
+                // returning at the first paired report
+                // (`aligner_sw_driver.cpp:2492`). The two anchor-mate
+                // passes share `ReportingState`. Net effect on pool
+                // size: 0/1/2 entries, mean ~1.2.
+                //
+                // With RUSTTIE_PAIRPASS, we emulate that distribution:
+                // at most one pair candidate from R1-anchored
+                // iterations, one from R2-anchored. Subsequent
+                // candidates from an already-emitted anchor mate are
+                // dropped. Default (no flag) keeps the existing
+                // unbounded accumulation. Negative result for
+                // RUSTTIE_KHITS1 (full-stop after first) showed this
+                // pattern is too aggressive; per-mate gating is the
+                // BT2-faithful middle ground.
+                if std::env::var_os("RUSTTIE_PAIRPASS").is_some() {
+                    let already = if anchor_was_r1 {
+                        pair_from_r1_anchor
+                    } else {
+                        pair_from_r2_anchor
+                    };
+                    if already {
+                        // Skip this candidate — same anchor mate already
+                        // contributed a pair, BT2's parallel call would
+                        // have returned by now.
+                        continue;
+                    }
+                    if anchor_was_r1 {
+                        pair_from_r1_anchor = true;
+                    } else {
+                        pair_from_r2_anchor = true;
+                    }
+                }
                 out.pair_pool.push(cand);
                 consecutive_failures = 0;
-                // BT2's `extendSeedsPaired` short-circuits via
-                // `return EXTEND_POLICY_FULFILLED` (`aligner_sw_driver.cpp:2492`)
-                // immediately after the first paired report. With
-                // RUSTTIE_KHITS1 set, mimic this: stop the descent loop
-                // entirely after the first pair candidate is added.
-                // Pool ends up size 1 (or 2 when ungapped/gapped fallback
-                // both fire). The remaining size>1 reads come from BT2's
-                // outer for-mate loop calling extendSeedsPaired twice.
-                if std::env::var_os("RUSTTIE_KHITS1").is_some() {
+                if std::env::var_os("RUSTTIE_PAIRPASS").is_some()
+                    && pair_from_r1_anchor
+                    && pair_from_r2_anchor
+                {
+                    // Both anchor passes produced a report — BT2 would
+                    // be fully done. Short-circuit.
                     break 'pass_loop;
                 }
             }
