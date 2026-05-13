@@ -648,3 +648,37 @@ AS-disagree drops 69 → 36 (chosen alignment matches BT2 in 33 more reads); AS-
 * Integration with the non-joint path (`align_read_with_descent`) so single-end alignment also benefits.
 
 These are incremental refinements on top of the current foundation; each is small relative to the primitives + algorithm port that's now done.
+
+---
+
+## Phase 2 partial: structural refinements (94.3% holds)
+
+Several small Phase 2 deliverables shipped behind `--bt2-descent`:
+
+* **Random row-order within small SA ranges.** Matches BT2's `rands_[i].next(rnd)` even for small ranges (`aligner_sw_driver.cpp:1859`).
+* **Read name in PRNG seed.** `gen_rand_seed(seq, qual, NAME, 0)` now uses the actual read name, not `&[]`. Matches BT2's `pat.cpp:45-82`.
+* **Quality encoding fix.** BT2's `genRandSeed` reads `(int)qual[i]` from raw FASTQ bytes (Phred+33 ASCII). We were pre-subtracting 33 — now pass ASCII through directly. Brings our seed derivation to match the byte-exact `gen_rand_seed_byte_exact` test.
+
+None of the three shift the chr22 metric: 94.3% MAPQ holds. Each fix is *structurally* correct and brings us closer to BT2's exact behavior, but the residual divergence is in **PRNG-state advancement** (every `nextU32`/`nextBool`/`nextFloat` call in BT2 must happen in the exact same order to match the row pick sequence) and **extendSeedsPaired's `done()` short-circuit timing** — neither of which is reachable without porting most of `aligner_sw_driver.cpp` (~1000+ LOC).
+
+### Sweep summary (all with `--joint-descent --bt2-descent`)
+
+| `-D` | MAPQ | mapped | AS-agree | AS-disagree |
+|---|---|---|---|---|
+| 5 | 94.0% | 19,990 | 1135 | 63 |
+| 8 | 94.1% | 19,994 | 1125 | 61 |
+| 12 | 94.3% | 19,998 | 1102 | 44 |
+| **15** (default) | **94.3%** | **19,998** | **1102** | **44** |
+| 30 | 94.2% | 19,999 | 1125 | 30 |
+| 50 | 94.2% | 20,000 | 1125 | 25 |
+| 100 | 94.2% | 20,000 | 1129 | 21 |
+| 200 | 94.2% | 20,000 | 1141 | 21 |
+
+The MAPQ curve is non-monotonic: bigger `-D` recovers more reads (mapped: 19,998 → 20,000) and fixes AS-disagree (44 → 21) but introduces more AS-agree disagreement (1102 → 1141). Net MAPQ peaks at D=12-15 and degrades modestly past that. D=15 default is the empirical sweet spot.
+
+### What's still needed to close the remaining 5.7%
+
+1. **`extendSeedsPaired` done() short-circuit.** The `khits=1` `foundConcordant` path that sets `doneConcord_=true` after the first pair and gates subsequent `foundMate` to false (`aln_sink.cpp:73-102`, `aligner_sw_driver.cpp:2400`). Without this we keep emitting pair candidates past where BT2 stops, ending up with cartesian-second-best as secbest instead of BT2's traversal-order-second.
+2. **Byte-exact PRNG-state advancement.** Every `rnd.nextX()` call in BT2 must happen in the same order with the same state. Means porting the seed-rank-order (`rankSeedHits` in `aligner_seed.h:1019` which calls `nextBool` + `nextU32` per iteration) and matching the call sequence inside `extendSeedsPaired`.
+
+Together these are roughly 800–1200 LOC of additional port work plus several days of debugging cycles. Tracked in #4 and beyond.
