@@ -67,8 +67,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
       - uses: Swatinem/rust-cache@v2
       - name: Verify each crate packages cleanly
-        run: |
-          cargo package -p rusttie-io --no-verify
-          cargo package -p rusttie-index --no-verify
-          cargo package -p rusttie-align --no-verify
-          cargo package -p rusttie-cli --no-verify
+        # --workspace packages all members in one invocation so intra-workspace
+        # path-deps resolve against the just-packaged siblings instead of
+        # crates.io (where 0.0.1 has not been published yet).
+        run: cargo package --workspace --no-verify
