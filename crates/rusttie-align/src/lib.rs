@@ -2,6 +2,7 @@
 //! SIMD'd extension via `block-aligner` lands in Phase 3.
 
 pub mod align;
+pub mod bt2_random;
 pub mod extend;
 pub mod mapq;
 pub mod paired;
