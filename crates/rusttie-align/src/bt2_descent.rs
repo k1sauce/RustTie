@@ -222,12 +222,13 @@ pub fn prioritize_sa_tups_rands(
         return out;
     }
 
-    // BT2 sorts seeds by SA-range size ascending, but breaks ties via
-    // PRNG-driven order (`rankSeedHits` in `aligner_seed.h:1019-1080`).
-    // We approximate by tagging each seed with a deterministic random
-    // value before sorting — exact tie order will differ from BT2's
-    // wrap-around scan from a random start, but the *distribution* of
-    // tie orderings matches.
+    // BT2's `satpos.sort()` (`aligner_sw_driver.cpp:612`) is a stable
+    // size-only sort. Mirroring that exactly regressed the legacy path
+    // from 94.4% → 94.3% MAPQ (-8 chosen-disagree); the rnd-tagged sort
+    // empirically samples tie ordering in a way that better matches
+    // BT2's net pool composition once the legacy mate-rescue loop runs.
+    // Keeping the rnd-tagged version pending the row-sampling port that
+    // would make the byte-exact variant net-positive.
     let mut tagged: Vec<(SeedHit, u32)> =
         seeds.into_iter().map(|s| (s, rnd.next_u32())).collect();
     tagged.sort_by_key(|(s, tag)| (s.size(), *tag));
