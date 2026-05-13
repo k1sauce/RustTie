@@ -37,6 +37,13 @@ impl RandomSource {
         ret ^= self.last;
         ret
     }
+
+    /// `next_u32() / u32::MAX` as a single-precision float. BT2's
+    /// `nextFloat()` divides in float32 precision — preserve that for
+    /// byte-exact compatibility (`random_source.h:137-140`).
+    pub fn next_float(&mut self) -> f32 {
+        self.next_u32() as f32 / u32::MAX as f32
+    }
 }
 
 /// "Without replacement" integer sampler. Adapts strategy:
@@ -146,6 +153,11 @@ impl Random1toN {
     /// Move from seen-list to swap-list mode. Build a swap-list containing
     /// every integer in `[0, n)` that we haven't yet returned, in
     /// ascending order. Mirrors BT2's conversion at `random_util.h:138-156`.
+    /// Mark an SA-range as exhausted (used by RowSampler-style elimination).
+    pub fn set_done(&mut self) {
+        self.cur = self.n;
+    }
+
     fn convert_to_swaplist(&mut self) {
         self.seen.sort_unstable();
         let mut new_list: Vec<usize> = Vec::with_capacity(self.n - self.cur);
@@ -166,6 +178,91 @@ impl Random1toN {
         self.cur = 0;
         self.converted = true;
         self.swaplist = true;
+    }
+}
+
+/// Weighted random sampler with elimination — picks one bin out of N
+/// according to per-bin masses, with the ability to drop bins from
+/// circulation. Port of BT2's `RowSampler` (`aligner_sw_driver.h:179-256`).
+///
+/// In BT2's paired-descent, this picks WHICH non-small SA-range to sample
+/// a row from. Larger ranges (more BWT hits) have proportionally less
+/// weight, so smaller (more specific) seeds are favored.
+#[derive(Debug, Clone)]
+pub struct RowSampler {
+    /// Per-bin probability mass.
+    masses: Vec<f64>,
+    /// Per-bin elimination flag (true = excluded from sampling).
+    eliminated: Vec<bool>,
+    /// Sum of masses for live (non-eliminated) bins.
+    mass: f64,
+}
+
+impl RowSampler {
+    /// Initialize the sampler with per-bin (length, range_size) pairs.
+    /// `lensq` squares the length term; `szsq` squares the size term.
+    /// BT2 calls this with both `true` so the weight is
+    /// `(extended_length^2) / (range_size^2)`.
+    pub fn new<I: IntoIterator<Item = (usize, usize)>>(
+        bins: I,
+        lensq: bool,
+        szsq: bool,
+    ) -> Self {
+        let mut masses = Vec::new();
+        let mut mass: f64 = 0.0;
+        for (len, range_sz) in bins {
+            let mut num = len as f64;
+            if lensq {
+                num *= num;
+            }
+            let mut denom = range_sz as f64;
+            if szsq {
+                denom *= denom;
+            }
+            let m = num / denom;
+            masses.push(m);
+            mass += m;
+        }
+        let eliminated = vec![false; masses.len()];
+        Self {
+            masses,
+            eliminated,
+            mass,
+        }
+    }
+
+    /// Mark bin `i` as exhausted so subsequent `next()` calls skip it.
+    pub fn finished_range(&mut self, i: usize) {
+        if !self.eliminated[i] {
+            self.eliminated[i] = true;
+            self.mass -= self.masses[i];
+        }
+    }
+
+    /// Sample a live bin index proportional to its mass. BT2 uses
+    /// `nextFloat() * mass` and walks the cumulative mass; we match
+    /// that exactly so the same RNG state picks the same bin.
+    pub fn next(&mut self, rnd: &mut RandomSource) -> usize {
+        let rd = (rnd.next_float() as f64) * self.mass;
+        let mut mass_sofar = 0.0;
+        let mut last_unelim: usize = usize::MAX;
+        for (i, &m) in self.masses.iter().enumerate() {
+            if !self.eliminated[i] {
+                last_unelim = i;
+                mass_sofar += m;
+                if rd < mass_sofar {
+                    return i;
+                }
+            }
+        }
+        // Float drift can leave rd >= cumulative mass on the last bin.
+        // BT2 falls through to the last unelim bin; match that behavior.
+        debug_assert_ne!(last_unelim, usize::MAX);
+        last_unelim
+    }
+
+    pub fn total_mass(&self) -> f64 {
+        self.mass
     }
 }
 
@@ -290,5 +387,48 @@ mod tests {
                 489, 45, 123, 103, 160, 439, 41, 213, 17, 315,
             ]
         );
+    }
+
+    /// `nextFloat` returns values in roughly [0, 1] using f32 division.
+    #[test]
+    fn next_float_in_range() {
+        let mut r = RandomSource::new(42);
+        for _ in 0..100 {
+            let f = r.next_float();
+            assert!((0.0..=1.0).contains(&f), "got {f}");
+        }
+    }
+
+    /// `RowSampler` weighted distribution: with masses [10, 1, 1], bin 0
+    /// should dominate.
+    #[test]
+    fn row_sampler_weighted() {
+        let mut rnd = RandomSource::new(42);
+        // Equivalent to (len=10, sz=1) → mass 100; (len=1, sz=1) → mass 1.
+        let mut s = RowSampler::new(
+            vec![(10, 1), (1, 1), (1, 1)],
+            true,
+            true,
+        );
+        let mut counts = [0usize; 3];
+        for _ in 0..10_000 {
+            counts[s.next(&mut rnd)] += 1;
+        }
+        // Expected weights: 100 / 102 ≈ 98%, 1/102 ≈ 1%, 1/102 ≈ 1%.
+        assert!(counts[0] > 9_500, "bin 0 should dominate, got {counts:?}");
+        assert!(counts[1] < 500);
+        assert!(counts[2] < 500);
+    }
+
+    /// `RowSampler::finished_range` excludes a bin from sampling.
+    #[test]
+    fn row_sampler_elimination() {
+        let mut rnd = RandomSource::new(42);
+        let mut s = RowSampler::new(vec![(1, 1), (1, 1), (1, 1)], false, false);
+        s.finished_range(1);
+        for _ in 0..100 {
+            let pick = s.next(&mut rnd);
+            assert_ne!(pick, 1, "bin 1 should be eliminated");
+        }
     }
 }
