@@ -362,6 +362,7 @@ pub fn align_read_with_descent(
                 &mut pass_total_hits,
                 &mut pass_aligned_seeds,
                 &mut cap_fired,
+                None,
             );
         }
         pass_cands.sort_by_key(|c| (c.sa_range_size, c.ref_id, c.ref_off));
@@ -527,6 +528,11 @@ pub(crate) struct PrioritizedCandidate {
 /// caller can compute BT2's repetitiveness criterion. Sets `cap_fired`
 /// true if any seed was skipped due to `seed_hit_cap` — caller uses this
 /// to pessimize MAPQ (unverified candidates may include a real alternate).
+///
+/// `rnd` is optional. When `Some`, repetitive seeds (size > `seed_hit_cap`)
+/// are *sampled* in BT2-faithful order rather than skipped — at the cost
+/// of more work per read. The environment variable `RUSTTIE_BT2_DESCENT`
+/// enables this from the CLI without a code change.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn collect_prioritized(
     idx: &Bt2Index,
@@ -539,9 +545,29 @@ pub(crate) fn collect_prioritized(
     total_hits: &mut u64,
     aligned_seeds: &mut u32,
     cap_fired: &mut bool,
+    rnd: Option<&mut crate::bt2_random::RandomSource>,
 ) {
     let read_len = query.len() as u32;
     let dbg = std::env::var_os("RUSTTIE_DEBUG").is_some();
+    let bt2_descent = std::env::var_os("RUSTTIE_BT2_DESCENT").is_some();
+
+    if bt2_descent && rnd.is_some() {
+        collect_prioritized_bt2(
+            idx,
+            query,
+            seed_len,
+            shift,
+            seed_hit_cap,
+            strand,
+            out,
+            total_hits,
+            aligned_seeds,
+            cap_fired,
+            rnd.unwrap(),
+        );
+        return;
+    }
+
     for off in seed_offsets_shifted(read_len, seed_len, shift) {
         let seed = &query[off as usize..(off + seed_len) as usize];
         let Some(range) = backward_search(idx, seed) else {
@@ -575,6 +601,79 @@ pub(crate) fn collect_prioritized(
                 sa_range_size: hits,
             });
         }
+    }
+}
+
+/// BT2-faithful candidate collection. Instead of skipping seeds that
+/// exceed `seed_hit_cap`, sample them in BT2's prioritize-and-walk order
+/// via [`crate::bt2_descent::prioritize_sa_tups_rands`]. The `seed_hit_cap`
+/// is repurposed as the cap on total *sampled* rows per pass — matching
+/// BT2's `maxelt` parameter to `prioritizeSATupsRands`.
+#[allow(clippy::too_many_arguments)]
+fn collect_prioritized_bt2(
+    idx: &Bt2Index,
+    query: &[u8],
+    seed_len: u32,
+    shift: u32,
+    seed_hit_cap: u32,
+    strand: Strand,
+    out: &mut Vec<PrioritizedCandidate>,
+    total_hits: &mut u64,
+    aligned_seeds: &mut u32,
+    cap_fired: &mut bool,
+    rnd: &mut crate::bt2_random::RandomSource,
+) {
+    use crate::bt2_descent::{SeedHit, prioritize_sa_tups_rands};
+    let read_len = query.len() as u32;
+    let mut seeds: Vec<SeedHit> = Vec::new();
+    for off in seed_offsets_shifted(read_len, seed_len, shift) {
+        let seed = &query[off as usize..(off + seed_len) as usize];
+        let Some(range) = backward_search(idx, seed) else {
+            continue;
+        };
+        if range.is_empty() {
+            continue;
+        }
+        let hits = range.len();
+        *total_hits += hits as u64;
+        *aligned_seeds += 1;
+        // No cap-and-skip here — large ranges feed into the sampler.
+        seeds.push(SeedHit {
+            sa_lo: range.lo,
+            sa_hi: range.hi,
+            rdoff: off,
+            seedlen: seed_len,
+            fw: matches!(strand, Strand::Forward),
+            nlex: 0,
+            nrex: 0,
+        });
+    }
+    // BT2's `maxelt` parameter caps total elements explored per pass. Use
+    // the same value as our existing `seed_hit_cap` × number-of-seeds to
+    // give roughly equivalent total work to the legacy path; the
+    // *distribution* of work shifts but the budget is preserved.
+    let maxelt = (seed_hit_cap as usize) * seeds.len().max(1);
+    let rows = prioritize_sa_tups_rands(seeds, 5, true, true, maxelt, rnd);
+    // Any seed with sa_range_size > seed_hit_cap*8 is "very repetitive";
+    // surface to cap_fired so MAPQ pessimization keeps firing.
+    for r in &rows {
+        if r.sa_range_size > seed_hit_cap.saturating_mul(8) {
+            *cap_fired = true;
+            break;
+        }
+    }
+    for r in rows {
+        let pos = resolve_text_pos(idx, r.sa_row);
+        let hit = joined_to_ref(idx, pos);
+        if hit.ref_off < r.rdoff {
+            continue;
+        }
+        out.push(PrioritizedCandidate {
+            ref_id: hit.ref_id,
+            ref_off: hit.ref_off - r.rdoff,
+            strand,
+            sa_range_size: r.sa_range_size,
+        });
     }
 }
 

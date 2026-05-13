@@ -156,6 +156,12 @@ pub fn prioritize_sa_tups_rands(
             break;
         }
         let bin = row_samp.next(rnd);
+        // Float drift can leave `total_mass > 0` while every bin is
+        // eliminated; the sampler then returns its sentinel. Treat as
+        // exhausted.
+        if bin == usize::MAX {
+            break;
+        }
         // Lazy-initialize the per-range row chooser.
         if row_choosers[bin].is_none() {
             row_choosers[bin] = Some(Random1toN::new(sorted[nsmall + bin].size() as usize));

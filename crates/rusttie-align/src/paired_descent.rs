@@ -34,6 +34,7 @@ use crate::align::{
     collect_prioritized, mate_rescue, score_candidate_gapped, score_candidate_ungapped,
     seed_interval,
 };
+use crate::bt2_random::{RandomSource, ascii_to_bt2_base, gen_rand_seed};
 use crate::paired::{FRAG_LEN_MAX, FRAG_LEN_MIN, PairCandidate};
 use crate::revcomp::reverse_complement;
 use crate::align::Alignment;
@@ -93,6 +94,19 @@ pub fn align_pair_jointly(
 
     let r1_smin = scoring.score_min(r1_seq.len() as u32);
     let r2_smin = scoring.score_min(r2_seq.len() as u32);
+
+    // BT2-faithful per-read PRNG seed (paired: XOR of both mates' seeds).
+    // The PRNG is used by the optional bt2_descent path inside
+    // `collect_prioritized` to sample large SA ranges in BT2's order.
+    // Qname is not threaded down here yet — use empty name; the seed
+    // still depends on sequence + quality which is the dominant input.
+    let r1_bt2_seq: Vec<u8> = r1_seq.iter().map(|&b| ascii_to_bt2_base(b)).collect();
+    let r2_bt2_seq: Vec<u8> = r2_seq.iter().map(|&b| ascii_to_bt2_base(b)).collect();
+    let r1_qual_raw: Vec<u8> = r1_qual.iter().map(|&q| q.saturating_sub(33)).collect();
+    let r2_qual_raw: Vec<u8> = r2_qual.iter().map(|&q| q.saturating_sub(33)).collect();
+    let seed_r1 = gen_rand_seed(&r1_bt2_seq, &r1_qual_raw, &[], 0);
+    let seed_r2 = gen_rand_seed(&r2_bt2_seq, &r2_qual_raw, &[], 0);
+    let mut rnd = RandomSource::new(seed_r1 ^ seed_r2);
 
     let r1_strands: [(Strand, &[u8]); 2] = [
         (Strand::Forward, r1_seq),
@@ -185,6 +199,7 @@ pub fn align_pair_jointly(
                 &mut pass_total_hits,
                 &mut pass_aligned_seeds,
                 &mut cap_fired,
+                Some(&mut rnd),
             );
             for c in buf.drain(..) {
                 pass_cands.push(JointCandidate {
@@ -206,6 +221,7 @@ pub fn align_pair_jointly(
                 &mut pass_total_hits,
                 &mut pass_aligned_seeds,
                 &mut cap_fired,
+                Some(&mut rnd),
             );
             for c in buf.drain(..) {
                 pass_cands.push(JointCandidate {
