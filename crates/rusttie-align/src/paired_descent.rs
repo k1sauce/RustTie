@@ -656,18 +656,38 @@ pub fn align_pair_jointly(
     out.pair_pool.sort_by(|a, b| b.score_sum.cmp(&a.score_sum));
     out.pair_pool.truncate(pool_cap());
 
-    // Optional pool-size dump for pool-composition divergence analysis.
-    // RUSTTIE_DUMP_POOL=<path> appends one line per read: "<name>\t<size>\t<scores csv>".
+    // Optional pool dump for pool-composition divergence analysis.
+    // RUSTTIE_DUMP_POOL=<path> appends one line per read with one
+    // [rt-pool ...] entry per pair candidate, format-matching BT2's
+    // `aln_sink.cpp` instrumentation so the two outputs can be diffed
+    // directly. Example BT2 line for cross-reference:
+    //   [bt2-pool qn=NAME r1=(off=N,fw=N,score=N) r2=(off=N,fw=N,score=N) sum=N]
     if let Ok(path) = std::env::var("RUSTTIE_DUMP_POOL") {
         use std::io::Write;
         if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
             let name = std::str::from_utf8(r1_name).unwrap_or("?");
+            // Backward-compatible legacy line: name<TAB>size<TAB>scores
             let scores: Vec<String> = out
                 .pair_pool
                 .iter()
                 .map(|c| c.score_sum.to_string())
                 .collect();
             let _ = writeln!(f, "{}\t{}\t{}", name, out.pair_pool.len(), scores.join(","));
+            // Per-candidate detail lines (BT2-format-compatible)
+            for c in &out.pair_pool {
+                let _ = writeln!(
+                    f,
+                    "[rt-pool qn={} r1=(off={},fw={},score={}) r2=(off={},fw={},score={}) sum={}]",
+                    name,
+                    c.r1.ref_off,
+                    if c.r1.strand == Strand::Forward { 1 } else { 0 },
+                    c.r1.score,
+                    c.r2.ref_off,
+                    if c.r2.strand == Strand::Forward { 1 } else { 0 },
+                    c.r2.score,
+                    c.score_sum,
+                );
+            }
         }
     }
 
