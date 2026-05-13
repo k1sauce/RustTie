@@ -41,7 +41,19 @@ use crate::align::Alignment;
 
 /// Cap on pair-pool size — matches BT2's default `mhits + 1 = 51`
 /// (`vendor/bowtie2/bt2_search.cpp:343`).
+///
+/// Override via `RUSTTIE_POOL_CAP=<n>` for diagnosis. BT2's empirical
+/// pool distribution on chr22 caps at ~10; setting this lower drops the
+/// RT-only long tail at 47-50 (~250 reads).
 pub const PAIR_POOL_CAP: usize = 51;
+
+#[inline]
+fn pool_cap() -> usize {
+    std::env::var("RUSTTIE_POOL_CAP")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(PAIR_POOL_CAP)
+}
 
 /// Output of joint-descent: pair pool (for paired MAPQ), per-mate lists
 /// (for unpaired / discordant fallback + secbest threading), and per-mate
@@ -316,7 +328,7 @@ pub fn align_pair_jointly(
             if consecutive_failures >= descent_budget {
                 continue;
             }
-            if out.pair_pool.len() >= PAIR_POOL_CAP {
+            if out.pair_pool.len() >= pool_cap() {
                 break 'pass_loop;
             }
 
@@ -642,7 +654,7 @@ pub fn align_pair_jointly(
 
     // Sort + cap the pair pool — BT2's mhits+1 limit on `rs1_`/`rs2_`.
     out.pair_pool.sort_by(|a, b| b.score_sum.cmp(&a.score_sum));
-    out.pair_pool.truncate(PAIR_POOL_CAP);
+    out.pair_pool.truncate(pool_cap());
 
     // Optional pool-size dump for pool-composition divergence analysis.
     // RUSTTIE_DUMP_POOL=<path> appends one line per read: "<name>\t<size>\t<scores csv>".
