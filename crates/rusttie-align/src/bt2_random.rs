@@ -181,6 +181,65 @@ impl Random1toN {
     }
 }
 
+/// Per-read random seed used to initialize [`RandomSource`]. BT2 derives
+/// this from the read sequence, qualities, and name plus the global
+/// `--seed` (default 0). Port of `genRandSeed` in `pat.cpp:45-82`.
+///
+/// `seq` must be in BT2's 0..=4 encoding (A=0, C=1, G=2, T=3, N=4).
+/// `qual` is the raw Phred quality byte string (NOT Phred+33 ASCII).
+/// `name` stops at the first `/` (mate-suffix delimiter); supply the
+/// raw name and let this function trim.
+///
+/// For paired-end reads BT2 XORs the two mates' seeds together
+/// (`bt2_search.cpp:3437`) to derive the single PRNG seed used by
+/// `extendSeedsPaired`.
+pub fn gen_rand_seed(seq: &[u8], qual: &[u8], name: &[u8], global_seed: u32) -> u32 {
+    // Match the BT2 magic constants byte-for-byte.
+    let mut rseed: u32 = global_seed
+        .wrapping_add(101)
+        .wrapping_mul(59)
+        .wrapping_mul(61)
+        .wrapping_mul(67)
+        .wrapping_mul(71)
+        .wrapping_mul(73)
+        .wrapping_mul(79)
+        .wrapping_mul(83);
+    // Sequence (BT2 encoding 0..=4).
+    for (i, &p) in seq.iter().enumerate() {
+        debug_assert!(p <= 4, "seq must be BT2-encoded (0..=4), got {p}");
+        let off = (i & 15) << 1;
+        rseed ^= (p as u32) << off;
+    }
+    // Qualities.
+    for (i, &p) in qual.iter().enumerate() {
+        let off = (i & 3) << 3;
+        rseed ^= (p as u32) << off;
+    }
+    // Name up to the first '/'.
+    for (i, &p) in name.iter().enumerate() {
+        if p == b'/' {
+            break;
+        }
+        let off = (i & 3) << 3;
+        rseed ^= (p as u32) << off;
+    }
+    rseed
+}
+
+/// Convert an ASCII base ('A'/'C'/'G'/'T'/'N') to BT2's 0..=4 encoding.
+/// Lowercase and ambiguous bases fold to 4 (N). Used as the input
+/// converter for [`gen_rand_seed`].
+#[inline]
+pub fn ascii_to_bt2_base(b: u8) -> u8 {
+    match b {
+        b'A' | b'a' => 0,
+        b'C' | b'c' => 1,
+        b'G' | b'g' => 2,
+        b'T' | b't' => 3,
+        _ => 4,
+    }
+}
+
 /// Weighted random sampler with elimination — picks one bin out of N
 /// according to per-bin masses, with the ability to drop bins from
 /// circulation. Port of BT2's `RowSampler` (`aligner_sw_driver.h:179-256`).
@@ -418,6 +477,31 @@ mod tests {
         assert!(counts[0] > 9_500, "bin 0 should dominate, got {counts:?}");
         assert!(counts[1] < 500);
         assert!(counts[2] < 500);
+    }
+
+    /// `gen_rand_seed` byte-exact against compiled BT2 (`bt2_rng_test.cpp`).
+    /// Two cases: a short read with quals "ABCDEFGH" + name "read1" +
+    /// global_seed=0, and a 22bp read with Q30-like quals (`\x1e`) +
+    /// name "test/1" + global_seed=42.
+    ///
+    /// If these break, the seed-derivation has drifted from
+    /// `vendor/bowtie2/pat.cpp:45-82`.
+    #[test]
+    fn gen_rand_seed_byte_exact() {
+        // Short read "ACGTACGT" → BT2 encoding [0,1,2,3,0,1,2,3].
+        let seq: Vec<u8> = b"ACGTACGT".iter().map(|&b| ascii_to_bt2_base(b)).collect();
+        let qual = b"ABCDEFGH";
+        let name = b"read1";
+        assert_eq!(gen_rand_seed(&seq, qual, name, 0), 1242527872);
+
+        // 22bp read with Q30 quals (raw byte 0x1e = 30), name with /1.
+        let seq22: Vec<u8> = b"ACGTACGTACGTACGTACGTAC"
+            .iter()
+            .map(|&b| ascii_to_bt2_base(b))
+            .collect();
+        let qual22 = [0x1eu8; 22];
+        let name22 = b"test/1";
+        assert_eq!(gen_rand_seed(&seq22, &qual22, name22, 42), 2335023741);
     }
 
     /// `RowSampler::finished_range` excludes a bin from sampling.
