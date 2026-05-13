@@ -141,3 +141,7 @@ for k in divergent[:3]:
     print(f'      bt2: pos={bt[k]["pos"]} cigar={bt[k]["cigar"]} mapq={bt[k]["mapq"]} as={bt[k]["tags"].get("AS")}')
     print(f'      rt:  pos={rt[k]["pos"]} cigar={rt[k]["cigar"]} mapq={rt[k]["mapq"]} as={rt[k]["tags"].get("AS")}')
 PY
+
+echo
+echo "=== MAPQ disagreement breakdown ==="
+python3 "$OLDPWD/scripts/mapq_diff.py" bt.sam rt.sam --read-len 100

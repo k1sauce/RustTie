@@ -160,7 +160,12 @@ impl Scoring {
 
     /// Minimum acceptable alignment score for a read of length `read_len`.
     pub fn score_min(&self, read_len: u32) -> i32 {
-        (self.score_min_const + self.score_min_coeff * read_len as f64).round() as i32
+        // BT2 truncates toward zero (C-style `(T)ret` cast in
+        // `simple_func.h:110`), not nearest-even round. `-60.6` → `-60`,
+        // not `-61`. The off-by-one per mate compounds to off-by-two on
+        // paired-end pair_smin and shifts the `bestdiff/diff` MAPQ ratio
+        // into the next bin down, costing ~6% MAPQ agreement on chr22.
+        (self.score_min_const + self.score_min_coeff * read_len as f64) as i32
     }
 }
 

@@ -1,15 +1,46 @@
 //! Paired-end concordance check + paired-alignment summary.
 //!
-//! BT2-faithful (Phase 3l): the per-mate alignment sets are combined via
-//! Cartesian product to enumerate concordant pairs, sorted by `r1.score +
-//! r2.score` descending. The best concordant pair is selected as the
-//! displayed alignment and the second-best concordant *pair* score is
-//! threaded into MAPQ as the `secbest` input — this matches BT2's
-//! `selectByScore` + `BowtieMapq2::mapq` for paired reads (see
-//! `vendor/bowtie2/aln_sink.cpp:1580` and `vendor/bowtie2/unique.h:218-235`).
-//! Per-mate secbest is **not** used for paired MAPQ — only the pair sum is.
+//! BT2-faithful: pair candidates come from an **explicit pool** of
+//! `(r1, r2)` tuples produced together by the paired-mode aligner — matching
+//! BT2's `rs1_`/`rs2_` parallel lists, populated one tuple per
+//! `AlnSinkWrap::report()` call (see `vendor/bowtie2/aln_sink.cpp:1413`).
+//! BT2 sums the two mate scores at parallel indices for the pair score
+//! (`aln_sink.cpp:1543-1548`) and reads `bestUnchosenCScore = buf[1].first`
+//! as the second-best pair score (`aln_sink.cpp:1606`) — NOT the
+//! Cartesian of per-mate alignment sets. Earlier versions of this file did
+//! Cartesian-enumeration, which over-counted near-best pairs and pulled
+//! MAPQ down on repetitive reads where BT2's pair-pool stays small.
+//!
+//! Per-mate `r1_alns`/`r2_alns` are still kept for the discordant /
+//! unpaired fallback paths (where there is no concordant pair candidate to
+//! choose from).
 
 use crate::align::{Alignment, Strand};
+
+/// One concordant pair candidate, as produced by the paired-mode aligner.
+/// Mirrors a single `(rs1_[i], rs2_[i])` entry in BT2's parallel lists.
+#[derive(Debug, Clone)]
+pub struct PairCandidate {
+    pub r1: Alignment,
+    pub r2: Alignment,
+    pub frag_len: u32,
+    pub score_sum: i32,
+}
+
+impl PairCandidate {
+    /// Try to build a pair candidate from two mate alignments, returning
+    /// `None` if they are not concordant under BT2's `--fr` defaults.
+    pub fn try_new(r1: Alignment, r2: Alignment) -> Option<Self> {
+        let frag_len = is_concordant(&r1, &r2)?;
+        let score_sum = r1.score + r2.score;
+        Some(PairCandidate {
+            r1,
+            r2,
+            frag_len,
+            score_sum,
+        })
+    }
+}
 
 /// BT2 default minimum fragment length (`-I 0`).
 pub const FRAG_LEN_MIN: u32 = 0;
@@ -73,16 +104,21 @@ pub fn is_concordant(a1: &Alignment, a2: &Alignment) -> Option<u32> {
     Some(frag_len)
 }
 
-/// Enumerate concordant pairs from per-mate alignment sets, pick the
-/// best-scoring pair (ties broken by leftmost r1 position then leftmost r2
-/// position) and return the second-best pair's score for paired MAPQ. When
-/// `report_k > 1`, additional concordant pairs (in score-descending order)
-/// are returned in `additional_concordant` for `-k`/`-a` reporting.
+/// Pick the best concordant pair from the explicit pair-candidate pool and
+/// return the second-best pool entry's score as `concordant_pair_secbest`
+/// for MAPQ. The pool corresponds to BT2's `rs1_`/`rs2_` parallel lists.
 ///
-/// Falls back to discordant (best-scoring r1 + best-scoring r2 with no
-/// concordance constraint) or unpaired if either or both mates failed to
-/// align — matches BT2's reporting decision tree.
+/// Falls back to a Cartesian scan of per-mate alignments to *find* a
+/// concordant primary when the explicit pool is empty (e.g., when neither
+/// independent best-extend nor mate-rescue produced a concordant tuple but
+/// some lower-tier combination still satisfies concordance). In that
+/// fallback path `concordant_pair_secbest` stays `None` — we don't have a
+/// BT2-equivalent secbest to report.
+///
+/// Falls all the way back to discordant / unpaired if no concordant pair
+/// can be assembled — matches BT2's reporting decision tree.
 pub fn classify_pair_set(
+    pair_pool: &[PairCandidate],
     r1_alns: &[Alignment],
     r2_alns: &[Alignment],
     r1_secbest: Option<i32>,
@@ -104,7 +140,45 @@ pub fn classify_pair_set(
         };
     }
 
-    // Cartesian product, filter by concordance, sort by pair score.
+    // Primary path: the explicit pool drives both primary and secbest, the
+    // same way BT2 reads them off `rs1_`/`rs2_` after sorting by pair score.
+    if !pair_pool.is_empty() {
+        let mut sorted: Vec<&PairCandidate> = pair_pool.iter().collect();
+        sorted.sort_by(|a, b| {
+            b.score_sum
+                .cmp(&a.score_sum)
+                .then(a.r1.ref_id.cmp(&b.r1.ref_id))
+                .then(a.r1.ref_off.cmp(&b.r1.ref_off))
+                .then(a.r2.ref_off.cmp(&b.r2.ref_off))
+        });
+        let primary = sorted[0];
+        let concordant_pair_secbest = sorted.get(1).map(|c| c.score_sum);
+        let mut additional = Vec::new();
+        if report_k > 1 {
+            let want = (report_k as usize).saturating_sub(1);
+            for c in sorted.iter().skip(1).take(want) {
+                additional.push((c.r1.clone(), c.r2.clone(), c.frag_len));
+            }
+        }
+        return PairOutcome {
+            r1: Some(primary.r1.clone()),
+            r2: Some(primary.r2.clone()),
+            r1_secbest,
+            r2_secbest,
+            pair_type: PairType::Concordant,
+            frag_len: primary.frag_len,
+            concordant_pair_secbest,
+            additional_concordant: additional,
+        };
+    }
+
+    // Fallback: small Cartesian over per-mate lists for primary detection
+    // only — we use this when the paired-aligner path produced no pair
+    // candidates but the independent per-mate alignments happen to form a
+    // concordant pair. No secbest is exposed: pulling it from the
+    // Cartesian over-counts near-best pairs vs BT2 (the bug this refactor
+    // fixes), and not exposing one here matches BT2's behavior when its
+    // pair-pool is empty.
     let mut concordant: Vec<(usize, usize, u32, i32)> = Vec::new();
     for (i, a1) in r1_alns.iter().enumerate() {
         for (j, a2) in r2_alns.iter().enumerate() {
@@ -122,9 +196,6 @@ pub fn classify_pair_set(
                 .then(r2_alns[a.1].ref_off.cmp(&r2_alns[b.1].ref_off))
         });
         let (i, j, frag_len, _best_score) = concordant[0];
-        let concordant_pair_secbest = concordant.get(1).map(|c| c.3);
-        // Collect up to (report_k - 1) additional concordant pairs after
-        // the primary, deduped against the primary itself.
         let mut additional = Vec::new();
         if report_k > 1 {
             let want = (report_k as usize).saturating_sub(1);
@@ -139,7 +210,7 @@ pub fn classify_pair_set(
             r2_secbest,
             pair_type: PairType::Concordant,
             frag_len,
-            concordant_pair_secbest,
+            concordant_pair_secbest: None,
             additional_concordant: additional,
         };
     }
@@ -157,7 +228,10 @@ pub fn classify_pair_set(
     }
 }
 
-/// Backwards-compat shim: single-best-per-mate, no `-k` reporting.
+/// Backwards-compat shim: single-best-per-mate, no `-k` reporting. Builds
+/// a one-element pair pool from the two mates if they're concordant — the
+/// natural BT2-equivalent pool for a "both mates aligned at their best,
+/// concordantly" call site.
 pub fn classify_pair(
     r1: Option<Alignment>,
     r2: Option<Alignment>,
@@ -166,7 +240,13 @@ pub fn classify_pair(
 ) -> PairOutcome {
     let r1_vec: Vec<Alignment> = r1.into_iter().collect();
     let r2_vec: Vec<Alignment> = r2.into_iter().collect();
-    classify_pair_set(&r1_vec, &r2_vec, r1_secbest, r2_secbest, 1)
+    let pool: Vec<PairCandidate> = match (r1_vec.first(), r2_vec.first()) {
+        (Some(a), Some(b)) => PairCandidate::try_new(a.clone(), b.clone())
+            .into_iter()
+            .collect(),
+        _ => Vec::new(),
+    };
+    classify_pair_set(&pool, &r1_vec, &r2_vec, r1_secbest, r2_secbest, 1)
 }
 
 #[cfg(test)]

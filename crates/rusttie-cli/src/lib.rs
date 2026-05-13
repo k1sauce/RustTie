@@ -10,7 +10,7 @@ use rayon::prelude::*;
 use rusttie_align::{
     AlignResult, Alignment, DESCENT_D_DEFAULT, DESCENT_R_DEFAULT, FRAG_LEN_MAX, FRAG_LEN_MIN,
     PER_SEED_HIT_CAP, PairOutcome, PairType, Scoring, Strand, align_read_with_descent,
-    classify_pair_set, mapq_v2, mate_rescue, reverse_complement,
+    PairCandidate, classify_pair_set, mapq_v2, mate_rescue, reverse_complement,
 };
 use rusttie_index::{BitPairReference, Bt2Index};
 use rusttie_io::{FastqReader, Read, ReadGroup, SamWriter, convert_sam_text_to_bam, sam};
@@ -448,6 +448,15 @@ pub const MATE_RESCUE_TOP_K_DEFAULT: u32 = 3;
 /// step (`vendor/bowtie2/aligner_sw_driver.cpp:2226-2347`): finds mate
 /// alignments that wouldn't be reachable via pure FM-index seed search
 /// (e.g., when the other mate's seeds all hit the cap).
+///
+/// Returns the explicit list of `(anchor, rescued)` pair candidates produced
+/// — these are BT2's `rs1_`/`rs2_` parallel entries for the cases where the
+/// paired-mode aligner emitted a pair via mate-find (see
+/// `vendor/bowtie2/aln_sink.cpp:1413`). Each rescue is also pushed into the
+/// per-mate `r1_alns`/`r2_alns` lists so the unpaired/discordant fallbacks
+/// downstream still see them, but the pair-candidate identity is preserved
+/// here so `classify_pair_set` can compute pair-secbest without
+/// Cartesian-ing.
 #[allow(clippy::too_many_arguments)]
 fn augment_via_mate_rescue(
     refs: &BitPairReference,
@@ -459,9 +468,10 @@ fn augment_via_mate_rescue(
     top_k: u32,
     r1_alns: &mut Vec<Alignment>,
     r2_alns: &mut Vec<Alignment>,
-) {
+) -> Vec<PairCandidate> {
+    let mut pair_candidates: Vec<PairCandidate> = Vec::new();
     if top_k == 0 || (r1_alns.is_empty() && r2_alns.is_empty()) {
-        return;
+        return pair_candidates;
     }
     let top_k_u = top_k as usize;
 
@@ -496,6 +506,9 @@ fn augment_via_mate_rescue(
             FRAG_LEN_MIN,
             FRAG_LEN_MAX,
         ) {
+            if let Some(cand) = PairCandidate::try_new(anchor.clone(), rescued.clone()) {
+                pair_candidates.push(cand);
+            }
             let key = (rescued.ref_id, rescued.ref_off, rescued.strand);
             if r2_keys.insert(key) {
                 r2_alns.push(rescued);
@@ -517,6 +530,9 @@ fn augment_via_mate_rescue(
             FRAG_LEN_MIN,
             FRAG_LEN_MAX,
         ) {
+            if let Some(cand) = PairCandidate::try_new(rescued.clone(), anchor.clone()) {
+                pair_candidates.push(cand);
+            }
             let key = (rescued.ref_id, rescued.ref_off, rescued.strand);
             if r1_keys.insert(key) {
                 r1_alns.push(rescued);
@@ -524,8 +540,8 @@ fn augment_via_mate_rescue(
         }
     }
 
-    // Re-sort each side score-descending so classify_pair_set's tiebreak
-    // (which assumes sorted input) stays consistent.
+    // Re-sort each side score-descending so classify_pair_set's fallback
+    // Cartesian (which assumes sorted input) stays consistent.
     r1_alns.sort_by(|a, b| {
         b.score
             .cmp(&a.score)
@@ -538,6 +554,8 @@ fn augment_via_mate_rescue(
             .then(a.ref_id.cmp(&b.ref_id))
             .then(a.ref_off.cmp(&b.ref_off))
     });
+
+    pair_candidates
 }
 
 /// Strip the conventional pair suffix (`/1`, `/2`) so both mates share QNAME
@@ -625,9 +643,23 @@ fn run_paired<R: std::io::Read, W: Write>(
                 );
                 let r1_sec = res1.as_ref().and_then(|r| r.secbest_score);
                 let r2_sec = res2.as_ref().and_then(|r| r.secbest_score);
+                let r1_best = res1.as_ref().map(|r| r.best.clone());
+                let r2_best = res2.as_ref().map(|r| r.best.clone());
                 let mut r1_alns: Vec<Alignment> = res1.map(|r| r.all).unwrap_or_default();
                 let mut r2_alns: Vec<Alignment> = res2.map(|r| r.all).unwrap_or_default();
-                augment_via_mate_rescue(
+                // Pair-candidate pool: each entry is one (r1, r2) tuple
+                // produced TOGETHER by the paired-mode aligner (matches
+                // BT2's `rs1_`/`rs2_` parallel lists). Two sources:
+                // (1) primary candidate from independent seed-and-extend
+                //     when both mates' best alignments form a concordant
+                //     pair; (2) each successful mate-rescue.
+                let mut pair_pool: Vec<PairCandidate> = Vec::new();
+                if let (Some(b1), Some(b2)) = (r1_best, r2_best)
+                    && let Some(cand) = PairCandidate::try_new(b1, b2)
+                {
+                    pair_pool.push(cand);
+                }
+                let rescue_cands = augment_via_mate_rescue(
                     refs,
                     &r1.seq,
                     &r1.qual,
@@ -638,7 +670,20 @@ fn run_paired<R: std::io::Read, W: Write>(
                     &mut r1_alns,
                     &mut r2_alns,
                 );
-                classify_pair_set(&r1_alns, &r2_alns, r1_sec, r2_sec, report_k)
+                pair_pool.extend(rescue_cands);
+                // Dedup by (r1 pos+strand, r2 pos+strand): different
+                // anchor paths can rediscover the same pair.
+                let mut seen = std::collections::HashSet::new();
+                pair_pool.retain(|c| {
+                    seen.insert((
+                        c.r1.ref_id,
+                        c.r1.ref_off,
+                        c.r1.strand,
+                        c.r2.ref_off,
+                        c.r2.strand,
+                    ))
+                });
+                classify_pair_set(&pair_pool, &r1_alns, &r2_alns, r1_sec, r2_sec, report_k)
             })
             .collect();
         for ((r1, r2), outcome) in batch1.iter().zip(batch2.iter()).zip(outcomes) {

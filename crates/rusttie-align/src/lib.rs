@@ -18,7 +18,7 @@ pub use align::{
 };
 pub use mapq::mapq_v2;
 pub use paired::{
-    FRAG_LEN_MAX, FRAG_LEN_MIN, PairOutcome, PairType, classify_pair, classify_pair_set,
-    is_concordant,
+    FRAG_LEN_MAX, FRAG_LEN_MIN, PairCandidate, PairOutcome, PairType, classify_pair,
+    classify_pair_set, is_concordant,
 };
 pub use revcomp::reverse_complement;
