@@ -108,11 +108,16 @@ pub fn prioritize_sa_tups_rands(
         return out;
     }
 
-    // BT2 sorts SA ranges by size ascending. Stable sort so per-mate
-    // input order is preserved among same-size ranges (matches BT2's
-    // `EList::sort` which is `std::stable_sort`).
-    let mut sorted: Vec<SeedHit> = seeds;
-    sorted.sort_by_key(|s| s.size());
+    // BT2 sorts seeds by SA-range size ascending, but breaks ties via
+    // PRNG-driven order (`rankSeedHits` in `aligner_seed.h:1019-1080`).
+    // We approximate by tagging each seed with a deterministic random
+    // value before sorting — exact tie order will differ from BT2's
+    // wrap-around scan from a random start, but the *distribution* of
+    // tie orderings matches.
+    let mut tagged: Vec<(SeedHit, u32)> =
+        seeds.into_iter().map(|s| (s, rnd.next_u32())).collect();
+    tagged.sort_by_key(|(s, tag)| (s.size(), *tag));
+    let sorted: Vec<SeedHit> = tagged.into_iter().map(|(s, _)| s).collect();
 
     let nsmall = sorted.iter().take_while(|s| s.size() <= nsm).count();
 
