@@ -16,10 +16,16 @@
 
 /// LCG matching BT2's `RandomSource` (`vendor/bowtie2/random_source.h:34`).
 /// Constants `a = 1664525, c = 1013904223` are the Numerical Recipes LCG.
-/// `next_u32` advances the LCG twice and XORs the high half of each.
+///
+/// Bit-position state: BT2's `nextBool`/`nextU2` extract bits from the
+/// most recent `nextU32` output rather than consuming new randomness.
+/// `last_off` tracks the next bit position to read. `nextU32` resets it
+/// to 0; `init` sets it to 30 (forcing the next bool/u2 call to refresh
+/// `last` via `nextU32`).
 #[derive(Debug, Clone, Copy)]
 pub struct RandomSource {
     last: u32,
+    last_off: u32,
 }
 
 impl RandomSource {
@@ -27,7 +33,8 @@ impl RandomSource {
     const C: u32 = 1013904223;
 
     pub fn new(seed: u32) -> Self {
-        Self { last: seed }
+        // BT2's `init` sets last_off = 30 — same effect as "needs refresh".
+        Self { last: seed, last_off: 30 }
     }
 
     pub fn next_u32(&mut self) -> u32 {
@@ -35,6 +42,7 @@ impl RandomSource {
         let mut ret = self.last >> 16;
         self.last = Self::A.wrapping_mul(self.last).wrapping_add(Self::C);
         ret ^= self.last;
+        self.last_off = 0;
         ret
     }
 
@@ -43,6 +51,30 @@ impl RandomSource {
     /// byte-exact compatibility (`random_source.h:137-140`).
     pub fn next_float(&mut self) -> f32 {
         self.next_u32() as f32 / u32::MAX as f32
+    }
+
+    /// Single bit extracted from the last LCG output without consuming
+    /// new randomness, refilling via `next_u32` when exhausted.
+    /// Matches BT2's `nextBool()` (`random_source.h:108-116`).
+    pub fn next_bool(&mut self) -> bool {
+        if self.last_off > 31 {
+            self.next_u32();
+        }
+        let ret = (self.last >> self.last_off) & 1;
+        self.last_off += 1;
+        ret == 1
+    }
+
+    /// Two bits from the last LCG output. BT2's `nextU2`
+    /// (`random_source.h:95-103`). Threshold is 30 (not 31) because
+    /// reading 2 bits needs both `last_off` and `last_off+1` valid.
+    pub fn next_u2(&mut self) -> u32 {
+        if self.last_off > 30 {
+            self.next_u32();
+        }
+        let ret = (self.last >> self.last_off) & 3;
+        self.last_off += 2;
+        ret
     }
 }
 
@@ -459,6 +491,37 @@ mod tests {
             let f = r.next_float();
             assert!((0.0..=1.0).contains(&f), "got {f}");
         }
+    }
+
+    /// `next_bool` byte-exact against compiled BT2. Output captured from
+    /// `bt2_rng_test.cpp` against `random_source.h:108-116`.
+    #[test]
+    fn next_bool_byte_exact() {
+        let mut r = RandomSource::new(42);
+        let bits: Vec<u8> = (0..16).map(|_| if r.next_bool() { 1 } else { 0 }).collect();
+        assert_eq!(bits, vec![0, 0, 0, 0, 1, 1, 0, 1, 1, 1, 0, 0, 1, 1, 1, 0]);
+    }
+
+    /// `next_u2` byte-exact against compiled BT2 (`random_source.h:95-103`).
+    #[test]
+    fn next_u2_byte_exact() {
+        let mut r = RandomSource::new(42);
+        let twos: Vec<u32> = (0..16).map(|_| r.next_u2()).collect();
+        assert_eq!(twos, vec![0, 0, 3, 2, 3, 0, 3, 1, 1, 3, 3, 0, 2, 2, 1, 1]);
+    }
+
+    /// Mixed call sequence — proves `last_off` state machine matches
+    /// BT2: `nextU32` resets the bit position, subsequent `nextBool`/
+    /// `nextU2` extract from the fresh LCG output.
+    #[test]
+    fn rng_state_machine_byte_exact() {
+        let mut r = RandomSource::new(42);
+        let b1 = r.next_bool();
+        let u1 = r.next_u32();
+        let u2 = r.next_u2();
+        let b2 = r.next_bool();
+        let u3 = r.next_u32();
+        assert_eq!((b1 as u32, u1, u2, b2 as u32, u3), (0, 378477685, 0, 1, 955892534));
     }
 
     /// `RowSampler` weighted distribution: with masses [10, 1, 1], bin 0
