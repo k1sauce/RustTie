@@ -31,8 +31,8 @@ use rusttie_index::{Bt2Index, BitPairReference};
 
 use crate::align::{
     DEFAULT_SEED_LEN, PrioritizedCandidate, REPETITIVE_HITS_THRESHOLD, Scoring, Strand,
-    collect_prioritized, mate_rescue, score_candidate_gapped, score_candidate_ungapped,
-    seed_interval,
+    collect_prioritized, collect_prioritized_bt2_per_mate, mate_rescue, score_candidate_gapped,
+    score_candidate_ungapped, seed_interval,
 };
 use crate::bt2_random::{RandomSource, ascii_to_bt2_base, gen_rand_seed};
 use crate::paired::{FRAG_LEN_MAX, FRAG_LEN_MIN, PairCandidate};
@@ -196,7 +196,18 @@ pub fn align_pair_jointly(
         let mut pass_total_hits: u64 = 0;
         let mut pass_aligned_seeds: u32 = 0;
 
+        // Per-mate rank-aware collection (collect_prioritized_bt2_per_mate
+        // via rank_seed_hits) was experimentally integrated and reverted:
+        // it shifts MAPQ from 94.3% to 93.8% on chr22 because our descent
+        // loop processes one seed's rows-to-completion before moving to
+        // the next, but our global consecutive-failures budget fires
+        // mid-seed and skips later seeds that have the true alignment.
+        // BT2 has per-seed-range failure streaks (maxEeStreak etc.) we
+        // haven't ported. Until that lands, fall back to the legacy
+        // per-strand path which interleaves seed rows after a global
+        // sort by SA size + ref_off.
         let mut buf: Vec<PrioritizedCandidate> = Vec::new();
+        {
         for (strand, query) in &r1_strands {
             buf.clear();
             collect_prioritized(
@@ -241,6 +252,7 @@ pub fn align_pair_jointly(
                 });
             }
         }
+        } // end legacy per-strand path
 
         pass_cands.sort_by_key(|jc| (jc.cand.sa_range_size, jc.cand.ref_id, jc.cand.ref_off));
 

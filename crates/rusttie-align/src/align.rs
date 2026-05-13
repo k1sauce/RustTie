@@ -604,11 +604,124 @@ pub(crate) fn collect_prioritized(
     }
 }
 
-/// BT2-faithful candidate collection. Instead of skipping seeds that
-/// exceed `seed_hit_cap`, sample them in BT2's prioritize-and-walk order
-/// via [`crate::bt2_descent::prioritize_sa_tups_rands`]. The `seed_hit_cap`
-/// is repurposed as the cap on total *sampled* rows per pass — matching
-/// BT2's `maxelt` parameter to `prioritizeSATupsRands`.
+/// BT2-faithful per-mate candidate collection that uses
+/// [`crate::bt2_descent::rank_seed_hits`] to interleave forward and
+/// revcomp seeds in BT2's exact PRNG-driven order before sampling rows.
+/// Replaces the legacy per-strand `collect_prioritized` calls — one
+/// invocation per mate covers both strands.
+///
+/// Threads `RandomSource` through: each rank step advances PRNG state
+/// by exactly the same call sequence BT2's `rankSeedHits` does (1
+/// nextBool + 2 nextU32 per rank), so downstream `Random1toN` row picks
+/// receive the same state.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn collect_prioritized_bt2_per_mate(
+    idx: &Bt2Index,
+    query_fw: &[u8],
+    query_rc: &[u8],
+    seed_len: u32,
+    shift: u32,
+    seed_hit_cap: u32,
+    out: &mut Vec<PrioritizedCandidate>,
+    total_hits: &mut u64,
+    aligned_seeds: &mut u32,
+    cap_fired: &mut bool,
+    rnd: &mut crate::bt2_random::RandomSource,
+) {
+    use crate::bt2_descent::{
+        SeedHit, SeedRankInput, prioritize_sa_tups_rands, rank_seed_hits,
+    };
+    let read_len = query_fw.len() as u32;
+    let offsets: Vec<u32> = seed_offsets_shifted(read_len, seed_len, shift).into_iter().collect();
+    let n_offs = offsets.len();
+    let mut fw_sizes: Vec<Option<u32>> = vec![None; n_offs];
+    let mut rc_sizes: Vec<Option<u32>> = vec![None; n_offs];
+    let mut fw_ranges: Vec<Option<(u32, u32)>> = vec![None; n_offs];
+    let mut rc_ranges: Vec<Option<(u32, u32)>> = vec![None; n_offs];
+
+    for (i, &off) in offsets.iter().enumerate() {
+        // FW strand: seed is query_fw[off..off+seed_len].
+        let seed_fw = &query_fw[off as usize..(off + seed_len) as usize];
+        if let Some(range) = backward_search(idx, seed_fw)
+            && !range.is_empty()
+        {
+            let hits = range.len();
+            *total_hits += hits as u64;
+            *aligned_seeds += 1;
+            fw_sizes[i] = Some(hits);
+            fw_ranges[i] = Some((range.lo, range.hi));
+        }
+        // RC strand: seed at the *same offset i* but in the reverse-
+        // complement read. BT2 indexes both strands by the read-position
+        // offset, so the i in `rc_sizes[i]` lines up with `fw_sizes[i]`.
+        let seed_rc = &query_rc[off as usize..(off + seed_len) as usize];
+        if let Some(range) = backward_search(idx, seed_rc)
+            && !range.is_empty()
+        {
+            let hits = range.len();
+            *total_hits += hits as u64;
+            *aligned_seeds += 1;
+            rc_sizes[i] = Some(hits);
+            rc_ranges[i] = Some((range.lo, range.hi));
+        }
+    }
+
+    // BT2's rankSeedHits: returns (offset_idx, fw) tuples in size-
+    // ascending order, with PRNG-driven tie-breaking. Advances
+    // RandomSource state via 1 nextBool + 2 nextU32 per rank step.
+    let input = SeedRankInput {
+        n_offs,
+        fw_sizes: fw_sizes.clone(),
+        rc_sizes: rc_sizes.clone(),
+    };
+    let rank_order = rank_seed_hits(&input, rnd);
+
+    // Convert rank order → Vec<SeedHit> in rank order for
+    // prioritize_sa_tups_rands. Pre-ranked: it will not re-sort.
+    let mut seeds: Vec<SeedHit> = Vec::with_capacity(rank_order.len());
+    for (offset_idx, fw) in rank_order {
+        let (lo, hi) = if fw {
+            fw_ranges[offset_idx].unwrap()
+        } else {
+            rc_ranges[offset_idx].unwrap()
+        };
+        seeds.push(SeedHit {
+            sa_lo: lo,
+            sa_hi: hi,
+            rdoff: offsets[offset_idx],
+            seedlen: seed_len,
+            fw,
+            nlex: 0,
+            nrex: 0,
+        });
+    }
+
+    let maxelt = (seed_hit_cap as usize) * seeds.len().max(1);
+    let rows = prioritize_sa_tups_rands(seeds, 5, true, true, maxelt, rnd);
+    for r in &rows {
+        if r.sa_range_size > seed_hit_cap.saturating_mul(8) {
+            *cap_fired = true;
+            break;
+        }
+    }
+    for r in rows {
+        let pos = resolve_text_pos(idx, r.sa_row);
+        let hit = joined_to_ref(idx, pos);
+        if hit.ref_off < r.rdoff {
+            continue;
+        }
+        out.push(PrioritizedCandidate {
+            ref_id: hit.ref_id,
+            ref_off: hit.ref_off - r.rdoff,
+            strand: if r.fw { Strand::Forward } else { Strand::Reverse },
+            sa_range_size: r.sa_range_size,
+        });
+    }
+}
+
+/// BT2-faithful candidate collection (per-strand legacy path). Kept
+/// because `align_read_with_descent` calls per-strand. New paired-mode
+/// code uses [`collect_prioritized_bt2_per_mate`] instead.
 #[allow(clippy::too_many_arguments)]
 fn collect_prioritized_bt2(
     idx: &Bt2Index,
