@@ -31,7 +31,7 @@ use rusttie_index::{Bt2Index, BitPairReference};
 
 use crate::align::{
     DEFAULT_SEED_LEN, PrioritizedCandidate, REPETITIVE_HITS_THRESHOLD, Scoring, Strand,
-    collect_prioritized, collect_prioritized_bt2_per_mate, mate_rescue, score_candidate_gapped,
+    collect_prioritized, collect_seed_sizes, mate_rescue, rank_and_sample, score_candidate_gapped,
     score_candidate_ungapped, seed_interval,
 };
 use crate::bt2_random::{RandomSource, ascii_to_bt2_base, gen_rand_seed};
@@ -218,39 +218,52 @@ pub fn align_pair_jointly(
         let use_rank = std::env::var_os("RUSTTIE_BT2_RANK").is_some();
         let mut buf: Vec<PrioritizedCandidate> = Vec::new();
         if use_rank {
-            buf.clear();
-            collect_prioritized_bt2_per_mate(
+            // BT2's matemap reorder: compute per-mate uniqueness from
+            // seed sizes (no PRNG), then process the mate with HIGHER
+            // uniqueness first (`bt2_search.cpp:3997`). This matches the
+            // PRNG-consumption order BT2 uses when both mates have hits,
+            // critical because rank_seed_hits and the downstream row
+            // sampler share a single RandomSource across both mates.
+            let r1_sizes = collect_seed_sizes(
                 idx,
                 r1_seq,
                 r1_rc.as_slice(),
                 DEFAULT_SEED_LEN,
                 shift,
-                seed_hit_cap,
-                &mut buf,
-                &mut pass_total_hits,
-                &mut pass_aligned_seeds,
-                &mut cap_fired,
-                &mut rnd,
             );
-            for c in buf.drain(..) {
-                pass_cands.push(JointCandidate { mate: AnchorMate::R1, cand: c });
-            }
-            buf.clear();
-            collect_prioritized_bt2_per_mate(
+            let r2_sizes = collect_seed_sizes(
                 idx,
                 r2_seq,
                 r2_rc.as_slice(),
                 DEFAULT_SEED_LEN,
                 shift,
-                seed_hit_cap,
-                &mut buf,
-                &mut pass_total_hits,
-                &mut pass_aligned_seeds,
-                &mut cap_fired,
-                &mut rnd,
             );
-            for c in buf.drain(..) {
-                pass_cands.push(JointCandidate { mate: AnchorMate::R2, cand: c });
+            pass_total_hits += r1_sizes.total_hits + r2_sizes.total_hits;
+            pass_aligned_seeds += r1_sizes.aligned_seeds + r2_sizes.aligned_seeds;
+            // matemap: process mate with higher uniqueness first when
+            // both have non-empty hits. Otherwise R1 first.
+            let r2_first = !r1_sizes.is_empty()
+                && !r2_sizes.is_empty()
+                && r2_sizes.uniqueness_factor() > r1_sizes.uniqueness_factor();
+            let order: [(AnchorMate, &_); 2] = if r2_first {
+                [(AnchorMate::R2, &r2_sizes), (AnchorMate::R1, &r1_sizes)]
+            } else {
+                [(AnchorMate::R1, &r1_sizes), (AnchorMate::R2, &r2_sizes)]
+            };
+            for (mate, sizes) in order.iter() {
+                buf.clear();
+                rank_and_sample(
+                    idx,
+                    sizes,
+                    DEFAULT_SEED_LEN,
+                    seed_hit_cap,
+                    &mut buf,
+                    &mut cap_fired,
+                    &mut rnd,
+                );
+                for c in buf.drain(..) {
+                    pass_cands.push(JointCandidate { mate: *mate, cand: c });
+                }
             }
         } else {
         for (strand, query) in &r1_strands {

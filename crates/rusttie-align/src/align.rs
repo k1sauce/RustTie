@@ -611,6 +611,167 @@ pub(crate) fn collect_prioritized(
     }
 }
 
+/// Per-mate seed-size data, produced by [`collect_seed_sizes`] without
+/// touching the PRNG. Lets callers compute BT2's `uniquenessFactor` and
+/// reorder mates *before* doing any PRNG-state-advancing work
+/// (`bt2_search.cpp:3988-4001`).
+pub(crate) struct PerMateSeedSizes {
+    pub offsets: Vec<u32>,
+    pub fw_sizes: Vec<Option<u32>>,
+    pub rc_sizes: Vec<Option<u32>>,
+    pub fw_ranges: Vec<Option<(u32, u32)>>,
+    pub rc_ranges: Vec<Option<(u32, u32)>>,
+    pub total_hits: u64,
+    pub aligned_seeds: u32,
+}
+
+impl PerMateSeedSizes {
+    /// BT2's `uniquenessFactor`: sum of `1/(nelt^2)` over all hit
+    /// (offset, strand) pairs. Mirrors `aligner_seed.h:886`.
+    pub fn uniqueness_factor(&self) -> f64 {
+        let mut r = 0.0;
+        for s in &self.fw_sizes {
+            if let Some(n) = s
+                && *n > 0
+            {
+                let n = *n as f64;
+                r += 1.0 / (n * n);
+            }
+        }
+        for s in &self.rc_sizes {
+            if let Some(n) = s
+                && *n > 0
+            {
+                let n = *n as f64;
+                r += 1.0 / (n * n);
+            }
+        }
+        r
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.fw_sizes.iter().all(|s| s.is_none() || s == &Some(0))
+            && self.rc_sizes.iter().all(|s| s.is_none() || s == &Some(0))
+    }
+}
+
+/// Phase 1: collect per-(offset, strand) SA range sizes for one mate.
+/// Pure BWT lookups, no PRNG. Caller can compute uniqueness and decide
+/// mate ordering before phase 2.
+pub(crate) fn collect_seed_sizes(
+    idx: &Bt2Index,
+    query_fw: &[u8],
+    query_rc: &[u8],
+    seed_len: u32,
+    shift: u32,
+) -> PerMateSeedSizes {
+    let read_len = query_fw.len() as u32;
+    let offsets: Vec<u32> = seed_offsets_shifted(read_len, seed_len, shift)
+        .into_iter()
+        .collect();
+    let n_offs = offsets.len();
+    let mut fw_sizes: Vec<Option<u32>> = vec![None; n_offs];
+    let mut rc_sizes: Vec<Option<u32>> = vec![None; n_offs];
+    let mut fw_ranges: Vec<Option<(u32, u32)>> = vec![None; n_offs];
+    let mut rc_ranges: Vec<Option<(u32, u32)>> = vec![None; n_offs];
+    let mut total_hits: u64 = 0;
+    let mut aligned_seeds: u32 = 0;
+    for (i, &off) in offsets.iter().enumerate() {
+        let seed_fw = &query_fw[off as usize..(off + seed_len) as usize];
+        if let Some(range) = backward_search(idx, seed_fw)
+            && !range.is_empty()
+        {
+            let hits = range.len();
+            total_hits += hits as u64;
+            aligned_seeds += 1;
+            fw_sizes[i] = Some(hits);
+            fw_ranges[i] = Some((range.lo, range.hi));
+        }
+        let seed_rc = &query_rc[off as usize..(off + seed_len) as usize];
+        if let Some(range) = backward_search(idx, seed_rc)
+            && !range.is_empty()
+        {
+            let hits = range.len();
+            total_hits += hits as u64;
+            aligned_seeds += 1;
+            rc_sizes[i] = Some(hits);
+            rc_ranges[i] = Some((range.lo, range.hi));
+        }
+    }
+    PerMateSeedSizes {
+        offsets,
+        fw_sizes,
+        rc_sizes,
+        fw_ranges,
+        rc_ranges,
+        total_hits,
+        aligned_seeds,
+    }
+}
+
+/// Phase 2: rank seed hits (BT2's `rankSeedHits`) and sample rows
+/// (BT2's `prioritizeSATups`). Advances `rnd` state in the exact
+/// BT2 call sequence.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rank_and_sample(
+    idx: &Bt2Index,
+    sizes: &PerMateSeedSizes,
+    seed_len: u32,
+    seed_hit_cap: u32,
+    out: &mut Vec<PrioritizedCandidate>,
+    cap_fired: &mut bool,
+    rnd: &mut crate::bt2_random::RandomSource,
+) {
+    use crate::bt2_descent::{
+        SeedHit, SeedRankInput, prioritize_sa_tups_rands, rank_seed_hits,
+    };
+    let input = SeedRankInput {
+        n_offs: sizes.offsets.len(),
+        fw_sizes: sizes.fw_sizes.clone(),
+        rc_sizes: sizes.rc_sizes.clone(),
+    };
+    let rank_order = rank_seed_hits(&input, rnd);
+    let mut seeds: Vec<SeedHit> = Vec::with_capacity(rank_order.len());
+    for (offset_idx, fw) in rank_order {
+        let (lo, hi) = if fw {
+            sizes.fw_ranges[offset_idx].unwrap()
+        } else {
+            sizes.rc_ranges[offset_idx].unwrap()
+        };
+        seeds.push(SeedHit {
+            sa_lo: lo,
+            sa_hi: hi,
+            rdoff: sizes.offsets[offset_idx],
+            seedlen: seed_len,
+            fw,
+            nlex: 0,
+            nrex: 0,
+        });
+    }
+    let maxelt = (seed_hit_cap as usize) * seeds.len().max(1);
+    let rows = prioritize_sa_tups_rands(seeds, 5, true, true, maxelt, rnd);
+    for r in &rows {
+        if r.sa_range_size > seed_hit_cap.saturating_mul(8) {
+            *cap_fired = true;
+            break;
+        }
+    }
+    for r in rows {
+        let pos = resolve_text_pos(idx, r.sa_row);
+        let hit = joined_to_ref(idx, pos);
+        if hit.ref_off < r.rdoff {
+            continue;
+        }
+        out.push(PrioritizedCandidate {
+            ref_id: hit.ref_id,
+            ref_off: hit.ref_off - r.rdoff,
+            strand: if r.fw { Strand::Forward } else { Strand::Reverse },
+            sa_range_size: r.sa_range_size,
+            seed_offset: r.rdoff,
+        });
+    }
+}
+
 /// BT2-faithful per-mate candidate collection that uses
 /// [`crate::bt2_descent::rank_seed_hits`] to interleave forward and
 /// revcomp seeds in BT2's exact PRNG-driven order before sampling rows.
@@ -635,96 +796,10 @@ pub(crate) fn collect_prioritized_bt2_per_mate(
     cap_fired: &mut bool,
     rnd: &mut crate::bt2_random::RandomSource,
 ) {
-    use crate::bt2_descent::{
-        SeedHit, SeedRankInput, prioritize_sa_tups_rands, rank_seed_hits,
-    };
-    let read_len = query_fw.len() as u32;
-    let offsets: Vec<u32> = seed_offsets_shifted(read_len, seed_len, shift).into_iter().collect();
-    let n_offs = offsets.len();
-    let mut fw_sizes: Vec<Option<u32>> = vec![None; n_offs];
-    let mut rc_sizes: Vec<Option<u32>> = vec![None; n_offs];
-    let mut fw_ranges: Vec<Option<(u32, u32)>> = vec![None; n_offs];
-    let mut rc_ranges: Vec<Option<(u32, u32)>> = vec![None; n_offs];
-
-    for (i, &off) in offsets.iter().enumerate() {
-        // FW strand: seed is query_fw[off..off+seed_len].
-        let seed_fw = &query_fw[off as usize..(off + seed_len) as usize];
-        if let Some(range) = backward_search(idx, seed_fw)
-            && !range.is_empty()
-        {
-            let hits = range.len();
-            *total_hits += hits as u64;
-            *aligned_seeds += 1;
-            fw_sizes[i] = Some(hits);
-            fw_ranges[i] = Some((range.lo, range.hi));
-        }
-        // RC strand: seed at the *same offset i* but in the reverse-
-        // complement read. BT2 indexes both strands by the read-position
-        // offset, so the i in `rc_sizes[i]` lines up with `fw_sizes[i]`.
-        let seed_rc = &query_rc[off as usize..(off + seed_len) as usize];
-        if let Some(range) = backward_search(idx, seed_rc)
-            && !range.is_empty()
-        {
-            let hits = range.len();
-            *total_hits += hits as u64;
-            *aligned_seeds += 1;
-            rc_sizes[i] = Some(hits);
-            rc_ranges[i] = Some((range.lo, range.hi));
-        }
-    }
-
-    // BT2's rankSeedHits: returns (offset_idx, fw) tuples in size-
-    // ascending order, with PRNG-driven tie-breaking. Advances
-    // RandomSource state via 1 nextBool + 2 nextU32 per rank step.
-    let input = SeedRankInput {
-        n_offs,
-        fw_sizes: fw_sizes.clone(),
-        rc_sizes: rc_sizes.clone(),
-    };
-    let rank_order = rank_seed_hits(&input, rnd);
-
-    // Convert rank order → Vec<SeedHit> in rank order for
-    // prioritize_sa_tups_rands. Pre-ranked: it will not re-sort.
-    let mut seeds: Vec<SeedHit> = Vec::with_capacity(rank_order.len());
-    for (offset_idx, fw) in rank_order {
-        let (lo, hi) = if fw {
-            fw_ranges[offset_idx].unwrap()
-        } else {
-            rc_ranges[offset_idx].unwrap()
-        };
-        seeds.push(SeedHit {
-            sa_lo: lo,
-            sa_hi: hi,
-            rdoff: offsets[offset_idx],
-            seedlen: seed_len,
-            fw,
-            nlex: 0,
-            nrex: 0,
-        });
-    }
-
-    let maxelt = (seed_hit_cap as usize) * seeds.len().max(1);
-    let rows = prioritize_sa_tups_rands(seeds, 5, true, true, maxelt, rnd);
-    for r in &rows {
-        if r.sa_range_size > seed_hit_cap.saturating_mul(8) {
-            *cap_fired = true;
-            break;
-        }
-    }
-    for r in rows {
-        let pos = resolve_text_pos(idx, r.sa_row);
-        let hit = joined_to_ref(idx, pos);
-        if hit.ref_off < r.rdoff {
-            continue;
-        }
-        out.push(PrioritizedCandidate {
-            ref_id: hit.ref_id,
-            ref_off: hit.ref_off - r.rdoff,
-            strand: if r.fw { Strand::Forward } else { Strand::Reverse },
-            sa_range_size: r.sa_range_size,
-            seed_offset: r.rdoff,
-        });
-    }
+    let sizes = collect_seed_sizes(idx, query_fw, query_rc, seed_len, shift);
+    *total_hits += sizes.total_hits;
+    *aligned_seeds += sizes.aligned_seeds;
+    rank_and_sample(idx, &sizes, seed_len, seed_hit_cap, out, cap_fired, rnd);
 }
 
 /// BT2-faithful candidate collection (per-strand legacy path). Kept
