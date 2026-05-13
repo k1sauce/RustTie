@@ -379,6 +379,17 @@ pub fn align_pair_jointly(
             {
                 out.pair_pool.push(cand);
                 consecutive_failures = 0;
+                // BT2's `extendSeedsPaired` short-circuits via
+                // `return EXTEND_POLICY_FULFILLED` (`aligner_sw_driver.cpp:2492`)
+                // immediately after the first paired report. With
+                // RUSTTIE_KHITS1 set, mimic this: stop the descent loop
+                // entirely after the first pair candidate is added.
+                // Pool ends up size 1 (or 2 when ungapped/gapped fallback
+                // both fire). The remaining size>1 reads come from BT2's
+                // outer for-mate loop calling extendSeedsPaired twice.
+                if std::env::var_os("RUSTTIE_KHITS1").is_some() {
+                    break 'pass_loop;
+                }
             }
             // Don't tick `consecutive_failures` for a duplicate pair —
             // it's a re-discovery, not a missed extension.
