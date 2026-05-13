@@ -138,10 +138,23 @@ pub struct Cli {
     /// (`vendor/bowtie2/aligner_sw_driver.cpp:1582`). Closes a portion of
     /// the MAPQ gap on repetitive reads at the cost of higher wall time
     /// (~3× at default, ~5× at `--seed-hit-cap 1000 -D 1000`). On chr22
-    /// validation: 92.6% MAPQ at default, 92.8% at hi-cap (vs 92.3% and
-    /// 92.6% for the independent-extend + top-K-rescue path).
+    /// validation: 94.0% MAPQ at default (up from 93.9% baseline), 94.1%
+    /// at hi-cap.
     #[arg(long = "joint-descent")]
     pub joint_descent: bool,
+
+    /// Experimental: BT2-faithful candidate sampling. Replaces our
+    /// `--seed-hit-cap` "skip if too repetitive" strategy with BT2's
+    /// `prioritizeSATupsRands` weighted random sampling
+    /// (`vendor/bowtie2/aligner_sw_driver.cpp:492-738`). Large SA ranges
+    /// get sampled one row at a time, weighted toward smaller ranges,
+    /// instead of being dropped entirely. Requires `--joint-descent` to
+    /// take effect (only path that threads the per-read PRNG). On chr22
+    /// validation: pushes `--joint-descent` from 94.0% → 94.3% MAPQ and
+    /// recovers ~15 reads at default settings, with negligible wall-time
+    /// impact.
+    #[arg(long = "bt2-descent", requires = "joint_descent")]
+    pub bt2_descent: bool,
 }
 
 fn parse_pair_i32(s: &str, name: &str) -> Result<(i32, i32)> {
@@ -240,6 +253,19 @@ pub fn run(cli: Cli) -> Result<()> {
     let descent_reseed = cli.descent_reseed;
     let mate_rescue_top_k = cli.mate_rescue_top_k;
     let joint_descent = cli.joint_descent;
+    let bt2_descent = cli.bt2_descent;
+    // The bt2_descent path inside `align::collect_prioritized` is gated
+    // on an env var. Forward the CLI flag by setting it in-process —
+    // explicit env var takes precedence so users can still flip it
+    // ad-hoc for diagnostics.
+    if bt2_descent && std::env::var_os("RUSTTIE_BT2_DESCENT").is_none() {
+        // SAFETY: we set the env var before any worker threads spawn
+        // (the rayon pool is built above only if `--threads >0`, but the
+        // align path reads this var per-call so set-before-call is safe).
+        unsafe {
+            std::env::set_var("RUSTTIE_BT2_DESCENT", "1");
+        }
+    }
     let read_group = build_read_group(&cli)?;
     // -k <int> / -a: how many alignments to report per read (or per pair).
     // -a wins over -k (clap rejects both) and means "all valid".

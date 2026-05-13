@@ -86,18 +86,30 @@ mate-rescues during extension, emitting pair candidates to a bounded pool
 | Setting | MAPQ | Wall (`-p 8`) |
 |---|---|---|
 | default | 93.9% | 0.8s |
-| `--seed-hit-cap 1000 -D 1000` | **94.2%** | 1.6s |
+| `--seed-hit-cap 1000 -D 1000` | 94.2% | 1.6s |
 | `--joint-descent` | 94.0% | 2.4s |
 | `--joint-descent --seed-hit-cap 1000 -D 1000` | 94.1% | 6.8s |
+| `--joint-descent --bt2-descent` | **94.3%** | 2.9s |
 
-After two precision fixes that surfaced this run (`score_min` C-style
-truncation + bin thresholds using `(double)0.1f`-style f32→f64 casts to
-match BT2's `unique.h`), the headline gap is now ~6% — both baseline and
-`--joint-descent` are within 0.3pp of each other. The joint-descent
-flag's structural advantage (pair candidates from joint extension) shows
-up most clearly in the `AS-agree` disagreement count: 1142 at baseline
-default vs 1122 at `--joint-descent` default.
-See [`rusttie.md`](./rusttie.md) for the full per-phase development log.
+After two precision fixes (`score_min` C-style truncation + bin
+thresholds using `(double)0.1f`-style f32→f64 casts to match BT2's
+`unique.h`) the headline jumped from 92.3% → 93.9%. Then a partial port
+of BT2's seed-prioritization algorithm
+([`aligner_sw_driver.cpp:492-738`](./vendor/bowtie2/aligner_sw_driver.cpp))
+landed behind `--bt2-descent`, replacing our "skip seeds with too many
+hits" strategy with BT2's weighted random sampling. That added another
++0.3pp and recovered 15 reads (19,983 → 19,998 mapped at default
+settings), at virtually identical wall time.
+
+Notably, `--joint-descent --bt2-descent` at default settings now beats
+brute-force hi-cap (`--seed-hit-cap 1000 -D 1000`) on both MAPQ (94.3% vs
+94.2%) and recall (19,998 vs 20,000 — virtually tied) at less than half
+the wall time. The BT2-faithful algorithm is structurally more efficient.
+
+The remaining ~5.7% gap to 100% needs Phase 2: `RedundantAlns` per-cell
+dedup plus BT2's exact `extendSeedsPaired` anchor iteration. Tracked in
+[GitHub #1](https://github.com/k1sauce/RustTie/issues/1). See
+[`rusttie.md`](./rusttie.md) for the full per-phase development log.
 
 ## Quick start
 
@@ -154,6 +166,7 @@ the same meaning and defaults as upstream.
 | `--mate-rescue <K>` | Mate-rescue from top-K anchors per side (default 3, 0 disables) |
 | `--seed-hit-cap` | Per-seed hit cap (default 50; tuning knob) |
 | `--joint-descent` | Experimental: joint paired-mode descent — see [Known MAPQ gap](#known-mapq-gap) |
+| `--bt2-descent` | Experimental: BT2-faithful candidate sampling (requires `--joint-descent`). See [Known MAPQ gap](#known-mapq-gap) |
 | `--mp MX,MN` | Mismatch penalty bounds |
 | `--rdg O,E` | Read-gap open/extend |
 | `--rfg O,E` | Reference-gap open/extend |
