@@ -670,25 +670,33 @@ fn run_paired<R: std::io::Read, W: Write>(
                         refs,
                         &r1.seq,
                         &r1.qual,
+                        &r1.name,
                         &r2.seq,
                         &r2.qual,
+                        &r2.name,
                         scoring,
                         seed_hit_cap,
                         descent_budget,
                         descent_reseed,
                     );
-                    // Ceiling-test cap: BT2's default-mode pool is mean 1.2,
-                    // mostly 1 or 2 entries (see rusttie.md Phase 0). Capping
-                    // our pool to match the distribution moves MAPQ even if
-                    // the specific alternate we keep differs from BT2's.
-                    // Override at runtime with RUSTTIE_POOL_LIMIT.
-                    let pool_limit: usize = std::env::var("RUSTTIE_POOL_LIMIT")
-                        .ok()
-                        .and_then(|s| s.parse().ok())
-                        .unwrap_or(usize::MAX);
-                    if jr.pair_pool.len() > pool_limit {
+                    // Pool truncation knob. Two modes:
+                    //   RUSTTIE_POOL_LIMIT=N      truncate after sort by
+                    //                             score (top-N strongest).
+                    //   RUSTTIE_DISCOVERY_LIMIT=N truncate in discovery
+                    //                             order (first-N reported),
+                    //                             matching BT2's
+                    //                             traversal-order pool.
+                    let discovery_limit: Option<usize> =
+                        std::env::var("RUSTTIE_DISCOVERY_LIMIT").ok().and_then(|s| s.parse().ok());
+                    let pool_limit: Option<usize> =
+                        std::env::var("RUSTTIE_POOL_LIMIT").ok().and_then(|s| s.parse().ok());
+                    if let Some(n) = discovery_limit {
+                        jr.pair_pool.truncate(n); // pool is already in discovery order
+                    } else if let Some(n) = pool_limit
+                        && jr.pair_pool.len() > n
+                    {
                         jr.pair_pool.sort_by(|a, b| b.score_sum.cmp(&a.score_sum));
-                        jr.pair_pool.truncate(pool_limit);
+                        jr.pair_pool.truncate(n);
                     }
                     return classify_pair_set(
                         &jr.pair_pool,

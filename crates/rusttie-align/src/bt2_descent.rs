@@ -121,7 +121,13 @@ pub fn prioritize_sa_tups_rands(
 
     let nsmall = sorted.iter().take_while(|s| s.size() <= nsm).count();
 
-    // Phase 1 — smalls: emit all rows from each small range in order.
+    // Phase 1 — smalls: emit all rows from each small range, but in
+    // *random* per-range order. BT2 uses Random1toN even within small
+    // ranges (`aligner_sw_driver.cpp:1859` — `rands_[i].next(rnd)`),
+    // so the FIRST row emitted from each range is a PRNG-driven pick
+    // among its rows, not `sa_lo`. This is the source of BT2's
+    // pool[0] being a suboptimal alternate sometimes — the random
+    // pick lands on a non-primary text position first.
     for seed in sorted.iter().take(nsmall) {
         if out.len() >= maxelt {
             return out;
@@ -129,9 +135,11 @@ pub fn prioritize_sa_tups_rands(
         let remaining = maxelt - out.len();
         let sz = seed.size() as usize;
         let take = sz.min(remaining);
-        for row in seed.sa_lo..(seed.sa_lo + take as u32) {
+        let mut sampler = Random1toN::new(sz);
+        for _ in 0..take {
+            let r = sampler.next(rnd);
             out.push(PrioritizedRow {
-                sa_row: row,
+                sa_row: seed.sa_lo + r as u32,
                 rdoff: seed.rdoff,
                 seedlen: seed.seedlen,
                 fw: seed.fw,
@@ -206,7 +214,10 @@ mod tests {
         }
     }
 
-    /// All-small-range case: every row gets emitted in sort-by-size order.
+    /// All-small-range case: every row gets emitted exactly once, and
+    /// ranges are processed in size-ascending order (size 1 first, then
+    /// size 3, then size 5). Within each range the order is PRNG-driven
+    /// so we only check membership, not specific row positions.
     #[test]
     fn smalls_only_emits_all_rows() {
         let mut rnd = RandomSource::new(42);
@@ -217,15 +228,16 @@ mod tests {
         ];
         let out = prioritize_sa_tups_rands(seeds, 5, true, true, 100, &mut rnd);
         assert_eq!(out.len(), 9);
-        // Should be sorted by SA range size: size 1 (300), then 3 (100s),
-        // then 5 (200s).
+        // First entry is the only row from the size-1 range.
         assert_eq!(out[0].sa_row, 300);
-        assert_eq!(out[1].sa_row, 100);
-        assert_eq!(out[2].sa_row, 101);
-        assert_eq!(out[3].sa_row, 102);
-        // 200s range — 5 rows.
-        assert_eq!(out[4].sa_row, 200);
-        assert_eq!(out[8].sa_row, 204);
+        // Next three are some permutation of {100, 101, 102}.
+        let mut got_3: Vec<u32> = out[1..4].iter().map(|r| r.sa_row).collect();
+        got_3.sort_unstable();
+        assert_eq!(got_3, vec![100, 101, 102]);
+        // Final five are some permutation of {200..205}.
+        let mut got_5: Vec<u32> = out[4..9].iter().map(|r| r.sa_row).collect();
+        got_5.sort_unstable();
+        assert_eq!(got_5, vec![200, 201, 202, 203, 204]);
     }
 
     /// `maxelt` truncates output.
@@ -255,8 +267,8 @@ mod tests {
         assert!(seen.iter().all(|&r| r < 50));
     }
 
-    /// Mixed small + large: smalls emitted exhaustively first, then large
-    /// is sampled.
+    /// Mixed small + large: small range processed first (exhaustively
+    /// but in random per-range order), then large range sampled.
     #[test]
     fn mixed_smalls_then_large() {
         let mut rnd = RandomSource::new(42);
@@ -266,10 +278,10 @@ mod tests {
         ];
         let out = prioritize_sa_tups_rands(seeds, 5, true, true, 50, &mut rnd);
         assert_eq!(out.len(), 50);
-        // First 3 should be the small range, in order.
-        assert_eq!(out[0].sa_row, 1000);
-        assert_eq!(out[1].sa_row, 1001);
-        assert_eq!(out[2].sa_row, 1002);
+        // First 3 should be the small range, in some PRNG order.
+        let mut got_small: Vec<u32> = out[0..3].iter().map(|r| r.sa_row).collect();
+        got_small.sort_unstable();
+        assert_eq!(got_small, vec![1000, 1001, 1002]);
         // Remaining 47 from the large range, all in [0, 100).
         for row in &out[3..] {
             assert!(row.sa_row < 100);

@@ -78,8 +78,10 @@ pub fn align_pair_jointly(
     refs: &BitPairReference,
     r1_seq: &[u8],
     r1_qual: &[u8],
+    r1_name: &[u8],
     r2_seq: &[u8],
     r2_qual: &[u8],
+    r2_name: &[u8],
     scoring: &Scoring,
     seed_hit_cap: u32,
     descent_budget: u32,
@@ -104,8 +106,8 @@ pub fn align_pair_jointly(
     let r2_bt2_seq: Vec<u8> = r2_seq.iter().map(|&b| ascii_to_bt2_base(b)).collect();
     let r1_qual_raw: Vec<u8> = r1_qual.iter().map(|&q| q.saturating_sub(33)).collect();
     let r2_qual_raw: Vec<u8> = r2_qual.iter().map(|&q| q.saturating_sub(33)).collect();
-    let seed_r1 = gen_rand_seed(&r1_bt2_seq, &r1_qual_raw, &[], 0);
-    let seed_r2 = gen_rand_seed(&r2_bt2_seq, &r2_qual_raw, &[], 0);
+    let seed_r1 = gen_rand_seed(&r1_bt2_seq, &r1_qual_raw, r1_name, 0);
+    let seed_r2 = gen_rand_seed(&r2_bt2_seq, &r2_qual_raw, r2_name, 0);
     let mut rnd = RandomSource::new(seed_r1 ^ seed_r2);
 
     let r1_strands: [(Strand, &[u8]); 2] = [
