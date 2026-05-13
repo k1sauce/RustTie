@@ -682,3 +682,44 @@ The MAPQ curve is non-monotonic: bigger `-D` recovers more reads (mapped: 19,998
 2. **Byte-exact PRNG-state advancement.** Every `rnd.nextX()` call in BT2 must happen in the same order with the same state. Means porting the seed-rank-order (`rankSeedHits` in `aligner_seed.h:1019` which calls `nextBool` + `nextU32` per iteration) and matching the call sequence inside `extendSeedsPaired`.
 
 Together these are roughly 800–1200 LOC of additional port work plus several days of debugging cycles. Tracked in #4 and beyond.
+
+---
+
+## Phase 2 deep port attempt (session result: primitives complete, integration blocked)
+
+After confirming the wall at 94.3% requires byte-exact BT2 algorithm matching (not just precision fixes or pool-size tuning), this session pushed the Phase 2 primitives all the way to integration-ready state and ran the integration experiment:
+
+### Primitives landed
+
+* `RandomSource` with `last_off` state machine (`random_source.h:34-116`): `nextU32`, `nextFloat`, `nextBool`, `nextU2` all byte-exact validated against compiled BT2 across multiple test cases (including the mixed-call state-machine test).
+* `Random1toN` (`random_util.h:32-160`): swap-list and seen-list modes, byte-exact validated.
+* `RowSampler` (`aligner_sw_driver.h:179-256`): weighted bin selection with elimination.
+* `gen_rand_seed` (`pat.cpp:45-82`): per-read PRNG seed derivation, fixed quality-encoding bug (was pre-subtracting 33; BT2 reads raw ASCII bytes).
+* `rank_seed_hits` (`aligner_seed.h:1019-1080`): BT2's seed iteration order via PRNG-driven strand and offset randomization. Advances PRNG state in exact BT2 call sequence (1 nextBool + 2 nextU32 per rank step).
+
+### Integration experiments (all negative)
+
+Three structural experiments tried and reverted, each demonstrating that the primitives alone aren't enough:
+
+1. **RUSTTIE_KHITS1**: full-stop after first paired report. 94.3% → 81.4%. Too aggressive; BT2 doesn't actually stop after one report, it stops *the current extendSeedsPaired call*.
+2. **RUSTTIE_PAIRPASS**: cap at one pair per anchor mate. 94.3% → 88.0%. Better than KHITS1, still bad. Our anchor iteration order differs from BT2's, so "first pair from r1 anchor" lands on suboptimal alternates without the wrap-around scan.
+3. **Rank-aware per-mate collection**: full integration of `rank_seed_hits` into `align_pair_jointly`'s seed iteration. 94.3% → 93.8%. Per-seed iteration order matches BT2 BUT our global `consecutive_failures` budget fires mid-seed, preventing later seeds (which often have the true alignment) from being processed.
+
+All three experiments stay in the code as env-var-gated hooks (`RUSTTIE_KHITS1`, `RUSTTIE_PAIRPASS`) or as unused-but-tested building blocks (`collect_prioritized_bt2_per_mate`). Future Phase 2 work has a clean foundation; these negative results are committed with `[negative]` markers in commit messages so the path forward isn't muddied.
+
+### What the next session needs
+
+To unblock the rank-aware integration, port BT2's per-seed-range streak counters from `aligner_sw_driver.cpp:1825-1851`:
+
+```cpp
+if(prm.nExUgs >= maxUg || prm.nMateUgs >= maxUg) return EXTEND_EXCEEDED_HARD_LIMIT;
+if(prm.nUgFail >= maxUgStreak) return EXTEND_EXCEEDED_SOFT_LIMIT;
+if(mateStreaks_[i] >= maxMateStreak) {
+    rands_[i].setDone();  // give up on this seed range
+    break;
+}
+```
+
+These are separate counters from our global `descent_budget`. Once they're in place, the rank-aware iteration order can use them per-seed-range instead of firing the global budget mid-seed. That should let the BT2-faithful order produce its intended effect.
+
+The MAPQ ceiling at 94.3% is therefore a *structural* limit imposed by our budget model, not by the primitives or the algorithm. Resolving it is a clean unblocking task for the next focused session.
