@@ -723,3 +723,57 @@ if(mateStreaks_[i] >= maxMateStreak) {
 These are separate counters from our global `descent_budget`. Once they're in place, the rank-aware iteration order can use them per-seed-range instead of firing the global budget mid-seed. That should let the BT2-faithful order produce its intended effect.
 
 The MAPQ ceiling at 94.3% is therefore a *structural* limit imposed by our budget model, not by the primitives or the algorithm. Resolving it is a clean unblocking task for the next focused session.
+
+---
+
+## Phase 2 follow-up: per-seed-range streak reset + matched BT2 pool diagnostic
+
+Two incremental advances on top of the primitives:
+
+### Per-seed-range streak reset (94.3% → 94.4%)
+
+Empirically-driven, structurally-questionable: reset `consecutive_failures` whenever the candidate loop transitions to a new `(seed_offset, mate)` pair. This is *not* strictly BT2-faithful (BT2's `nUgFail`/`nDpFail` counters persist across seed ranges) but it improves chr22 MAPQ agreement by 0.1pp and *reduces* AS-disagree from 27 to 8 reads.
+
+A structurally-faithful variant was implemented and tested:
+* Drop per-seed reset
+* Add reset-on-extension-success (mirrors BT2's `nUgFail = 0` on ungapped success at `aligner_sw_driver.cpp:1263`)
+* Use the full BT2-default budget
+
+Results on chr22 D-sweep:
+
+| `-D` | MAPQ-agree | AS-disagree |
+|---|---|---|
+| 2  | 93.1% | 105 |
+| 8  | 94.1% | 49  |
+| 15 | 94.2% | 30  |
+| 25 | 94.2% | 27  |
+| 50 | 94.1% | 24  |
+
+Best structural result: 94.2% with 30 AS-disagree. Current per-seed-reset variant at D=2: **94.4% with 8 AS-disagree** — better on both metrics. Empirical winner stays. Documented in commit `a31cdc84`.
+
+### Matched BT2 vs RustTie pool comparison
+
+`RUSTTIE_DUMP_POOL=<path>` env hook (commit `bef93097`) and BT2's existing `aln_sink.cpp` instrumentation now produce comparable per-read pool data:
+
+| pool size | BT2 | RustTie |
+|---|---|---|
+| 1   | 8142 (81.4%) | 8164 (81.6%) |
+| 2   | 1542 (15.4%) |  534 ( 5.3%) |
+| 3   |  163 ( 1.6%) |  246 ( 2.5%) |
+| 4   |   52 ( 0.5%) |   81 ( 0.8%) |
+| 5–10|  ~100        |  ~250        |
+| 47–50| **0**       | **~250**     |
+| mean | **1.28**     | **4.03**     |
+
+The size-1 fraction matches BT2 closely (within 0.2pp). The size-2 fraction is the biggest mismatch: BT2 has 10pp more pools at size 2 than we do. The long tail at PAIR_POOL_CAP (47–50) is unique to RustTie and accounts for ~250 reads — these are repetitive reads where BT2's streak limit cuts off exploration but our per-seed-reset budget keeps refilling.
+
+949 reads have RustTie pool size > BT2 by 3+. Top cases: `rt=50, bt=2` (we collect 48 more candidates per read on these). These over-pooled reads contribute to "rt MAPQ < bt MAPQ" cases (748 of the 1114 AS-agree disagreements) — extra candidates tighten our secbest closer to best, dropping MAPQ.
+
+### Why simple fixes don't work
+
+Tried (all negative):
+
+1. **`RUSTTIE_BT2_RANK + RUSTTIE_PAIRPASS` combo** (BT2-faithful rank order + cap one pair per anchor): 94.4% → 82.7%. The rank-aware order doesn't yet match BT2's actual pool order (BT2's "first" still isn't our "first" even with rank).
+2. **`improved best/secbest` streak semantic** (mirror single-end's `-D` rule): neutral. The per-seed reset is dominant; the improved-tick semantic doesn't unlock a higher `-D` regime.
+
+The remaining 5.6% gap is the structural pool-composition divergence: we explore additional pair candidates BT2 short-circuits past (`aligner_sw_driver.cpp:2492-2493`'s `donePaired → return EXTEND_POLICY_FULFILLED`). Closing it requires a synchronized port of (a) BT2's exact candidate iteration order *and* (b) BT2's khits-driven short-circuit semantics. Either alone regresses.
