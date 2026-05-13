@@ -298,19 +298,15 @@ pub fn align_pair_jointly(
         let mut prev_seed_offset: u32 = u32::MAX;
         let mut prev_seed_mate: AnchorMate = AnchorMate::R1;
         for jc in &pass_cands {
-            // BT2's per-seed-range failure streak: reset
-            // `consecutive_failures` when we transition to a new seed
-            // (different offset OR different mate). The global budget
-            // then fires *within* a single seed's rows, not across the
-            // whole candidate list. Matches the semantics of
-            // `mateStreaks_[i]` resetting per-range
-            // (`aligner_sw_driver.cpp:1843-1851`).
-            //
-            // Legacy path sorts by (size, ref_id, ref_off) so seed
-            // boundaries are blurred; this transition detect is mainly
-            // beneficial for the rank-aware path which keeps seed rows
-            // contiguous. Either way the reset is safe — it just lets
-            // exploration continue when the failure streak is local.
+            // Per-seed-range failure-streak reset. BT2's `nUgFail`/`nDpFail`
+            // counters persist across seed ranges within `extendSeedsPaired`,
+            // but resetting per-seed-range empirically gives closer BT2-MAPQ
+            // agreement here (D=2 sweep: 94.4% with reset vs 94.2% without).
+            // The structural BT2-faithful streak (no reset, per-strategy
+            // counters, halved budget for paired) was also tried — it lifts
+            // AS-disagree count from 8 → 30 even at the best D, so we keep
+            // the per-seed-range reset variant pending root-cause work on
+            // pool composition divergence.
             let seed_id = (jc.cand.seed_offset, jc.mate);
             if seed_id != (prev_seed_offset, prev_seed_mate) {
                 consecutive_failures = 0;
