@@ -514,12 +514,18 @@ pub(crate) fn strand_idx(s: Strand) -> usize {
 /// Candidate enriched with the source seed's SA-range size and strand. The
 /// descent driver sorts by `sa_range_size` ascending so least-repetitive
 /// seeds extend first — same priority as BT2 uses.
+///
+/// `seed_offset` is the source seed's offset within the read (`rdoff`).
+/// Used in rank-aware descent paths to detect "seed transitions" so the
+/// per-seed-range failure budget can be reset (BT2's `mateStreaks_` array
+/// at `aligner_sw_driver.h:543`).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct PrioritizedCandidate {
     pub(crate) ref_id: u32,
     pub(crate) ref_off: u32,
     pub(crate) strand: Strand,
     pub(crate) sa_range_size: u32,
+    pub(crate) seed_offset: u32,
 }
 
 /// Collect prioritized candidates from `query` seeded at offsets shifted by
@@ -599,6 +605,7 @@ pub(crate) fn collect_prioritized(
                 ref_off: hit.ref_off - off,
                 strand,
                 sa_range_size: hits,
+                seed_offset: off,
             });
         }
     }
@@ -715,6 +722,7 @@ pub(crate) fn collect_prioritized_bt2_per_mate(
             ref_off: hit.ref_off - r.rdoff,
             strand: if r.fw { Strand::Forward } else { Strand::Reverse },
             sa_range_size: r.sa_range_size,
+            seed_offset: r.rdoff,
         });
     }
 }
@@ -786,6 +794,7 @@ fn collect_prioritized_bt2(
             ref_off: hit.ref_off - r.rdoff,
             strand,
             sa_range_size: r.sa_range_size,
+            seed_offset: r.rdoff,
         });
     }
 }

@@ -196,18 +196,51 @@ pub fn align_pair_jointly(
         let mut pass_total_hits: u64 = 0;
         let mut pass_aligned_seeds: u32 = 0;
 
-        // Per-mate rank-aware collection (collect_prioritized_bt2_per_mate
-        // via rank_seed_hits) was experimentally integrated and reverted:
-        // it shifts MAPQ from 94.3% to 93.8% on chr22 because our descent
-        // loop processes one seed's rows-to-completion before moving to
-        // the next, but our global consecutive-failures budget fires
-        // mid-seed and skips later seeds that have the true alignment.
-        // BT2 has per-seed-range failure streaks (maxEeStreak etc.) we
-        // haven't ported. Until that lands, fall back to the legacy
-        // per-strand path which interleaves seed rows after a global
-        // sort by SA size + ref_off.
+        // Per-mate rank-aware seed collection (uses
+        // `collect_prioritized_bt2_per_mate` → `rank_seed_hits` for
+        // BT2-faithful order). Gated behind `RUSTTIE_BT2_RANK` because
+        // the prior integration attempt regressed MAPQ — the descent
+        // loop now resets `consecutive_failures` on seed-offset
+        // transitions (BT2's per-seed-range streak semantics) to make
+        // this path viable.
+        let use_rank = std::env::var_os("RUSTTIE_BT2_RANK").is_some();
         let mut buf: Vec<PrioritizedCandidate> = Vec::new();
-        {
+        if use_rank {
+            buf.clear();
+            collect_prioritized_bt2_per_mate(
+                idx,
+                r1_seq,
+                r1_rc.as_slice(),
+                DEFAULT_SEED_LEN,
+                shift,
+                seed_hit_cap,
+                &mut buf,
+                &mut pass_total_hits,
+                &mut pass_aligned_seeds,
+                &mut cap_fired,
+                &mut rnd,
+            );
+            for c in buf.drain(..) {
+                pass_cands.push(JointCandidate { mate: AnchorMate::R1, cand: c });
+            }
+            buf.clear();
+            collect_prioritized_bt2_per_mate(
+                idx,
+                r2_seq,
+                r2_rc.as_slice(),
+                DEFAULT_SEED_LEN,
+                shift,
+                seed_hit_cap,
+                &mut buf,
+                &mut pass_total_hits,
+                &mut pass_aligned_seeds,
+                &mut cap_fired,
+                &mut rnd,
+            );
+            for c in buf.drain(..) {
+                pass_cands.push(JointCandidate { mate: AnchorMate::R2, cand: c });
+            }
+        } else {
         for (strand, query) in &r1_strands {
             buf.clear();
             collect_prioritized(
@@ -254,12 +287,38 @@ pub fn align_pair_jointly(
         }
         } // end legacy per-strand path
 
-        pass_cands.sort_by_key(|jc| (jc.cand.sa_range_size, jc.cand.ref_id, jc.cand.ref_off));
+        // Rank-aware path provides BT2-faithful seed order already.
+        // Legacy path produces unsorted candidates and needs the size
+        // sort to recover priority ordering.
+        if !use_rank {
+            pass_cands.sort_by_key(|jc| (jc.cand.sa_range_size, jc.cand.ref_id, jc.cand.ref_off));
+        }
 
         let mut consecutive_failures: u32 = 0;
+        let mut prev_seed_offset: u32 = u32::MAX;
+        let mut prev_seed_mate: AnchorMate = AnchorMate::R1;
         for jc in &pass_cands {
+            // BT2's per-seed-range failure streak: reset
+            // `consecutive_failures` when we transition to a new seed
+            // (different offset OR different mate). The global budget
+            // then fires *within* a single seed's rows, not across the
+            // whole candidate list. Matches the semantics of
+            // `mateStreaks_[i]` resetting per-range
+            // (`aligner_sw_driver.cpp:1843-1851`).
+            //
+            // Legacy path sorts by (size, ref_id, ref_off) so seed
+            // boundaries are blurred; this transition detect is mainly
+            // beneficial for the rank-aware path which keeps seed rows
+            // contiguous. Either way the reset is safe — it just lets
+            // exploration continue when the failure streak is local.
+            let seed_id = (jc.cand.seed_offset, jc.mate);
+            if seed_id != (prev_seed_offset, prev_seed_mate) {
+                consecutive_failures = 0;
+                prev_seed_offset = jc.cand.seed_offset;
+                prev_seed_mate = jc.mate;
+            }
             if consecutive_failures >= descent_budget {
-                break;
+                continue;
             }
             if out.pair_pool.len() >= PAIR_POOL_CAP {
                 break 'pass_loop;
