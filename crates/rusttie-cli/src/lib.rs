@@ -10,7 +10,8 @@ use rayon::prelude::*;
 use rusttie_align::{
     AlignResult, Alignment, DESCENT_D_DEFAULT, DESCENT_R_DEFAULT, FRAG_LEN_MAX, FRAG_LEN_MIN,
     PER_SEED_HIT_CAP, PairOutcome, PairType, Scoring, Strand, align_read_with_descent,
-    PairCandidate, classify_pair_set, mapq_v2, mate_rescue, reverse_complement,
+    PairCandidate, align_pair_jointly, classify_pair_set, mapq_v2, mate_rescue,
+    reverse_complement,
 };
 use rusttie_index::{BitPairReference, Bt2Index};
 use rusttie_io::{FastqReader, Read, ReadGroup, SamWriter, convert_sam_text_to_bam, sam};
@@ -617,10 +618,36 @@ fn run_paired<R: std::io::Read, W: Write>(
         if batch1.is_empty() {
             break;
         }
+        let joint_descent = std::env::var_os("RUSTTIE_JOINT_DESCENT").is_some();
         let outcomes: Vec<PairOutcome> = batch1
             .par_iter()
             .zip(batch2.par_iter())
             .map(|(r1, r2)| {
+                if joint_descent {
+                    // Experimental joint paired-descent path. Generates
+                    // the pair pool during simultaneous bilateral seed
+                    // extension — see crate `paired_descent` module.
+                    let jr = align_pair_jointly(
+                        idx,
+                        refs,
+                        &r1.seq,
+                        &r1.qual,
+                        &r2.seq,
+                        &r2.qual,
+                        scoring,
+                        seed_hit_cap,
+                        descent_budget,
+                        descent_reseed,
+                    );
+                    return classify_pair_set(
+                        &jr.pair_pool,
+                        &jr.r1_alns,
+                        &jr.r2_alns,
+                        jr.r1_secbest,
+                        jr.r2_secbest,
+                        report_k,
+                    );
+                }
                 let res1 = align_read_with_descent(
                     idx,
                     refs,

@@ -42,8 +42,8 @@ end-to-end pipeline matches Bowtie 2 closely enough for diffing experiments
 | CIGAR agreement | 100.0% |
 | AS / NM agreement | 99.6% |
 | MD agreement | 99.3% |
-| MAPQ agreement | 93.8% |
-| Wall time (`-p 8`) | 1.0s (BT2: 0.48s) |
+| MAPQ agreement | 92.3% |
+| Wall time (`-p 8`) | 0.8s (BT2: 0.48s) |
 
 **Real-data** (NA12878 mitochondrial paired-end Illumina reads from
 [nf-core/test-datasets](https://github.com/nf-core/test-datasets/tree/Sarek),
@@ -52,16 +52,32 @@ end-to-end pipeline matches Bowtie 2 closely enough for diffing experiments
 | Metric | RustTie vs Bowtie 2 |
 |---|---|
 | `.bt2` files | byte-identical |
-| Reads mapped | 1,040 (BT2: 1,047) — 99.3% of BT2's recall |
+| Reads mapped | 1,039 (BT2: 1,047) — 99.2% of BT2's recall |
 | Position agreement | 97.5% |
-| MAPQ agreement | 97.1% |
+| MAPQ agreement | 96.8% |
 | CIGAR / AS / NM / MD | 96.5 – 96.9% |
 
-Reproducible via `scripts/real_data_validate.sh`. Remaining MAPQ
-disagreement is mostly `both_low` cases — both tools report low MAPQ on
-multi-mappers but land on slightly different exact bin values from
-disagreeing alternate sets. See [`rusttie.md`](./rusttie.md) for the full
-per-phase development log.
+Reproducible via `scripts/chr22_validate.sh` and
+`scripts/real_data_validate.sh`. The chr22 script now emits a per-bin
+MAPQ-disagreement breakdown via [`scripts/mapq_diff.py`](./scripts/mapq_diff.py).
+
+### Known MAPQ gap
+
+The remaining ~7.7% MAPQ disagreement on the synthetic corpus is
+structural, not a tuning issue. It comes from BT2's paired-mode descent
+emitting pair candidates from **joint bilateral seed extension**: each
+entry in BT2's `rs1_`/`rs2_` parallel lists
+([`aln_sink.cpp:1413`](./vendor/bowtie2/aln_sink.cpp)) is one `(r1, r2)`
+tuple produced together when both mates extended concordantly from
+related seeds. RustTie aligns each mate independently and then mate-rescues
+from top-K anchors, so our pair pool is missing the close alternates BT2
+finds via joint extension — alternates that often don't even appear in
+BT2's output SAM but affect the `bestUnchosenCScore` input to MAPQ
+([`unique.h:234`](./vendor/bowtie2/unique.h)). Closing this requires
+porting BT2's `extendSeedsPaired` driver
+([`aligner_sw_driver.cpp:1582`](./vendor/bowtie2/aligner_sw_driver.cpp));
+that work is tracked but not yet done. See [`rusttie.md`](./rusttie.md)
+for the full per-phase development log.
 
 ## Quick start
 

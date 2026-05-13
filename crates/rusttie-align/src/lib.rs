@@ -5,6 +5,7 @@ pub mod align;
 pub mod extend;
 pub mod mapq;
 pub mod paired;
+pub mod paired_descent;
 pub mod revcomp;
 
 #[doc(hidden)]
@@ -21,4 +22,5 @@ pub use paired::{
     FRAG_LEN_MAX, FRAG_LEN_MIN, PairCandidate, PairOutcome, PairType, classify_pair,
     classify_pair_set, is_concordant,
 };
+pub use paired_descent::{JointDescentResult, PAIR_POOL_CAP, align_pair_jointly};
 pub use revcomp::reverse_complement;

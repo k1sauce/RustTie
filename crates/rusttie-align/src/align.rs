@@ -503,7 +503,7 @@ fn update_score_window(s: i32, current_best: &mut i32, current_secbest: &mut i32
 }
 
 #[inline]
-fn strand_idx(s: Strand) -> usize {
+pub(crate) fn strand_idx(s: Strand) -> usize {
     match s {
         Strand::Forward => 0,
         Strand::Reverse => 1,
@@ -514,11 +514,11 @@ fn strand_idx(s: Strand) -> usize {
 /// descent driver sorts by `sa_range_size` ascending so least-repetitive
 /// seeds extend first — same priority as BT2 uses.
 #[derive(Debug, Clone, Copy)]
-struct PrioritizedCandidate {
-    ref_id: u32,
-    ref_off: u32,
-    strand: Strand,
-    sa_range_size: u32,
+pub(crate) struct PrioritizedCandidate {
+    pub(crate) ref_id: u32,
+    pub(crate) ref_off: u32,
+    pub(crate) strand: Strand,
+    pub(crate) sa_range_size: u32,
 }
 
 /// Collect prioritized candidates from `query` seeded at offsets shifted by
@@ -528,7 +528,7 @@ struct PrioritizedCandidate {
 /// true if any seed was skipped due to `seed_hit_cap` — caller uses this
 /// to pessimize MAPQ (unverified candidates may include a real alternate).
 #[allow(clippy::too_many_arguments)]
-fn collect_prioritized(
+pub(crate) fn collect_prioritized(
     idx: &Bt2Index,
     query: &[u8],
     seed_len: u32,
@@ -619,7 +619,7 @@ fn locate_window(
 /// the alignment passes smin — partial / spurious candidates return None
 /// without paying SW cost.
 #[allow(clippy::too_many_arguments)]
-fn score_candidate_ungapped(
+pub(crate) fn score_candidate_ungapped(
     refs: &BitPairReference,
     ref_id: u32,
     seed_ref_off: u32,
