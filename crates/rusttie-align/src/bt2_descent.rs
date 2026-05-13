@@ -236,13 +236,18 @@ pub fn prioritize_sa_tups_rands(
 
     let nsmall = sorted.iter().take_while(|s| s.size() <= nsm).count();
 
-    // Phase 1 — smalls: emit all rows from each small range, but in
-    // *random* per-range order. BT2 uses Random1toN even within small
-    // ranges (`aligner_sw_driver.cpp:1859` — `rands_[i].next(rnd)`),
-    // so the FIRST row emitted from each range is a PRNG-driven pick
-    // among its rows, not `sa_lo`. This is the source of BT2's
-    // pool[0] being a suboptimal alternate sometimes — the random
-    // pick lands on a non-primary text position first.
+    // Phase 1 — smalls: emit all rows from each small range. BT2 uses
+    // Random1toN even within small ranges (`aligner_sw_driver.cpp:1859`
+    // — `rands_[i].next(rnd)`) but consumes that PRNG only during the
+    // extension loop in `extendSeedsPaired`, NOT inside `prioritizeSATupsRands`.
+    // To match BT2's PRNG state at the next call site (the next
+    // `rankSeedHits`), we must NOT consume PRNG for these small-range
+    // picks here — the caller is responsible for doing so per anchor
+    // extension if it wants byte-exact match.
+    //
+    // RUSTTIE_RT_SMALLS_RND=1 reinstates the old "consume PRNG inline"
+    // behavior for A/B regression testing against the prior 94.4% baseline.
+    let smalls_rand = std::env::var_os("RUSTTIE_RT_SMALLS_RND").is_some();
     for seed in sorted.iter().take(nsmall) {
         if out.len() >= maxelt {
             return out;
@@ -250,16 +255,29 @@ pub fn prioritize_sa_tups_rands(
         let remaining = maxelt - out.len();
         let sz = seed.size() as usize;
         let take = sz.min(remaining);
-        let mut sampler = Random1toN::new(sz);
-        for _ in 0..take {
-            let r = sampler.next(rnd);
-            out.push(PrioritizedRow {
-                sa_row: seed.sa_lo + r as u32,
-                rdoff: seed.rdoff,
-                seedlen: seed.seedlen,
-                fw: seed.fw,
-                sa_range_size: seed.size(),
-            });
+        if smalls_rand {
+            let mut sampler = Random1toN::new(sz);
+            for _ in 0..take {
+                let r = sampler.next(rnd);
+                out.push(PrioritizedRow {
+                    sa_row: seed.sa_lo + r as u32,
+                    rdoff: seed.rdoff,
+                    seedlen: seed.seedlen,
+                    fw: seed.fw,
+                    sa_range_size: seed.size(),
+                });
+            }
+        } else {
+            // Deterministic BWT-row order. No PRNG consumed.
+            for r in 0..take {
+                out.push(PrioritizedRow {
+                    sa_row: seed.sa_lo + r as u32,
+                    rdoff: seed.rdoff,
+                    seedlen: seed.seedlen,
+                    fw: seed.fw,
+                    sa_range_size: seed.size(),
+                });
+            }
         }
     }
     if out.len() >= maxelt || nsmall == sorted.len() {
