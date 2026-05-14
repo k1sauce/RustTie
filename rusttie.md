@@ -777,3 +777,56 @@ Tried (all negative):
 2. **`improved best/secbest` streak semantic** (mirror single-end's `-D` rule): neutral. The per-seed reset is dominant; the improved-tick semantic doesn't unlock a higher `-D` regime.
 
 The remaining 5.6% gap is the structural pool-composition divergence: we explore additional pair candidates BT2 short-circuits past (`aligner_sw_driver.cpp:2492-2493`'s `donePaired → return EXTEND_POLICY_FULFILLED`). Closing it requires a synchronized port of (a) BT2's exact candidate iteration order *and* (b) BT2's khits-driven short-circuit semantics. Either alone regresses.
+
+---
+
+## Phase 2 byte-exact PRNG trace iteration
+
+Built a matched `[bt2-rnd]` / `[rt-rnd]` instrumentation harness in both BT2 (`vendor/bowtie2/bt2_search.cpp` + `aligner_seed.h` + `random_source.h` accessors) and RustTie (`paired_descent.rs` gated by `RUSTTIE_DUMP_RND`). Runs with `bowtie2 --no-exact-upfront --no-1mm-upfront` to skip BT2's PRNG-advancing upfront paths so the rank/sample step starts from the init seed on both sides.
+
+### Bugs found via byte-exact diff
+
+1. **Initial seed XOR matches byte-exact: 2815419497**. Our `gen_rand_seed(r1) ^ gen_rand_seed(r2)` produces the same value BT2's `read_a().seed ^ read_b().seed` does — confirming the prior `gen_rand_seed` port was correct.
+
+2. **RC seed indexing was wrong**. BT2's RC seed at offset `depth` is `RC(query_fw[depth..depth+seed_len])` — same starting position as the FW seed, reverse-complemented in place (`sstring.h windowGetDna(fw=false)`). Our code was slicing `query_rc[off..off+seed_len]` which is RC of `query_fw[L-off-seed_len..L-off]` — a *totally different substring* mirrored across the read center. Fixed in the bt2-faithful path by slicing from `(L - off - seed_len)` to `(L - off)`. Per-seed RC sizes now match BT2 byte-exact.
+
+3. **Paired-end 1.2× interval boost was missing**. `bt2_search.cpp:3447` multiplies the seed interval by 1.2 and rounds when both mates pass the post filter. For 100bp reads: 12 → 14, dropping offset count 7 → 6. Added `paired_seed_interval()` + an `interval_override` parameter to `collect_seed_sizes`. The legacy path is unaffected.
+
+4. **Matemap order**: BT2 processes the mate with higher `uniquenessFactor` first (`bt2_search.cpp:3997`); we were always processing R1 first. Added `PerMateSeedSizes::uniqueness_factor()` and the reorder logic. Now matches BT2 on the test read.
+
+### rank_seed_hits proven byte-exact
+
+With `RUSTTIE_DUMP_RANK=1` (RustTie) + the BT2 `[bt2-rank]` instrumentation, the per-step trace of `rank_seed_hits` matches BT2's `rankSeedHits` exactly for the test read:
+
+| step | pre_last | rb | nu₀ | i_start₀ | nu₁ | i_start₁ | picked |
+|---|---|---|---|---|---|---|---|
+| 0 | 2815419497 | 0 | 731597763 | 3 | 4118148103 | 1 | (5, false) ✓ |
+| 1 | 4118114733 | 1 | 4018862322 | 0 | 2077631452 | 4 | (5, true) ✓ |
+| 2 | 2077675825 | 1 | 1694848497 | 3 | 1066559756 | 2 | (3, false) ✓ |
+| 3 | 1066534645 | 1 | 1104060260 | 2 | 1472440852 | 4 | (2, true) ✓ |
+| 4 | 1472419577 | 1 | 3489532865 | 5 | 2160709336 | 4 | (1, true) ✓ |
+| 5 | 2160674109 | 1 | 1097363781 | 3 | 424181962 | 4 | (3, true) ✓ |
+| 6 | 424187329 | 1 | 658796857 | 1 | 225463659 | 3 | (4, true) ✓ |
+| 7 | 225463429 | 1 | 839539299 | 3 | 1954376090 | 2 | (0, true) ✓ |
+
+post_rank `last`=1954393481 on both sides. **rank order is now BT2-exact.**
+
+### Remaining divergence: row sampling
+
+PRNG state diverges *after* rank: BT2's `pre_rank` for mate 0 = 1782446003, ours = 3083178731 (or 2407706107 before the deterministic-smalls change). The gap is in `prioritizeSATupsRands` + the row-iteration loop in `extendSeedsPaired`:
+
+* **BT2's Phase 1 (smalls)** consumes ZERO PRNG — it just sets up the per-range `Random1toN` samplers. Row picks happen lazily inside `extendSeedsPaired`'s while-loop via `rands_[i].next(rnd)`. Now matched: changed our smalls phase to emit rows in deterministic BWT-row order (`sa_lo, sa_lo+1, …`) with no PRNG consumption. `RUSTTIE_RT_SMALLS_RND=1` reinstates the old behavior for A/B testing.
+
+* **BT2's Phase 2 (large ranges)** + **extendSeedsPaired row loop**: still not matched. BT2 picks one row at a time via `RowSampler.next(rnd)` + `Random1toN.next(rnd)` per anchor extension, interleaved with mate-rescue. Our path pre-batches rows in `prioritize_sa_tups_rands` then iterates a flat list — same PRNG-call sequence in aggregate but at a different point in the program, so downstream measurements diverge.
+
+To make rank-aware byte-exact end-to-end, the row-sampling needs to move inside `paired_descent`'s anchor-iteration loop, mirroring BT2's `extendSeedsPaired` shape. That's the next layer.
+
+### MAPQ snapshot at end of iteration
+
+| path | -D=2 | -D=15 |
+|---|---|---|
+| legacy (default, det smalls) | **94.4% (8 chosen-disagree)** | 94.2% (18 chosen-disagree) |
+| legacy (random smalls, RT_SMALLS_RND=1) | 94.4% (8) | 94.2% (18) |
+| rank-aware (RUSTTIE_BT2_RANK=1) | 92.6% (144) | 92.5% (155) |
+
+Legacy holds at the empirical high water mark. Rank-aware regresses because the rank input is now BT2-exact but the downstream row-sampling diverges harder.
