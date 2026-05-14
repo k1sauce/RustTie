@@ -30,10 +30,11 @@ use std::collections::HashSet;
 use rusttie_index::{Bt2Index, BitPairReference};
 
 use crate::align::{
-    DEFAULT_SEED_LEN, PrioritizedCandidate, REPETITIVE_HITS_THRESHOLD, Scoring, Strand,
-    collect_prioritized, collect_seed_sizes, mate_rescue, rank_and_sample, score_candidate_gapped,
-    score_candidate_ungapped, seed_interval,
+    DEFAULT_SEED_LEN, LazyCandidate, PrioritizedCandidate, REPETITIVE_HITS_THRESHOLD, Scoring,
+    Strand, collect_prioritized, collect_seed_sizes, mate_rescue, rank_and_sample,
+    rank_and_sample_lazy, score_candidate_gapped, score_candidate_ungapped, seed_interval,
 };
+use rusttie_index::search::{joined_to_ref, resolve_text_pos};
 use crate::bt2_random::{RandomSource, ascii_to_bt2_base, gen_rand_seed};
 use crate::paired::{FRAG_LEN_MAX, FRAG_LEN_MIN, PairCandidate};
 use crate::revcomp::reverse_complement;
@@ -286,16 +287,15 @@ pub fn align_pair_jointly(
                 [(AnchorMate::R1, &r1_sizes), (AnchorMate::R2, &r2_sizes)]
             };
             let dump_rnd = std::env::var_os("RUSTTIE_DUMP_RND").is_some();
+            let use_lazy = std::env::var_os("RUSTTIE_LAZY_ROWS").is_some();
             for (mate, sizes) in order.iter() {
                 buf.clear();
                 if dump_rnd {
                     let name = std::str::from_utf8(r1_name).unwrap_or("?");
-                    // mate-id matches BT2: matemap[0]=processed first
                     let mate_id = match mate {
                         AnchorMate::R1 => 0,
                         AnchorMate::R2 => 1,
                     };
-                    // Per-(offset, strand) sizes — diff against bt2-sz lines.
                     for (i, off) in sizes.offsets.iter().enumerate() {
                         let nfw = sizes.fw_sizes[i].unwrap_or(0);
                         let nrc = sizes.rc_sizes[i].unwrap_or(0);
@@ -311,15 +311,65 @@ pub fn align_pair_jointly(
                         rnd.last()
                     );
                 }
-                rank_and_sample(
-                    idx,
-                    sizes,
-                    DEFAULT_SEED_LEN,
-                    seed_hit_cap,
-                    &mut buf,
-                    &mut cap_fired,
-                    &mut rnd,
-                );
+                if use_lazy {
+                    let slots = rank_and_sample_lazy(
+                        idx,
+                        sizes,
+                        DEFAULT_SEED_LEN,
+                        seed_hit_cap,
+                        &mut cap_fired,
+                        &mut rnd,
+                    );
+                    for slot in slots {
+                        match slot {
+                            LazyCandidate::Single(c) => {
+                                pass_cands.push(JointCandidate { mate: *mate, cand: c });
+                            }
+                            LazyCandidate::Range { seed, mut sampler } => {
+                                // BT2-faithful row picks per small range.
+                                // Per-anchor Random1toN.next(rnd) call
+                                // mirrors `rands_[i].next(rnd)` in
+                                // `aligner_sw_driver.cpp:1859`.
+                                while !sampler.done() {
+                                    let r = sampler.next(&mut rnd) as u32;
+                                    let sa_row = seed.sa_lo + r;
+                                    let pos = resolve_text_pos(idx, sa_row);
+                                    let hit = joined_to_ref(idx, pos);
+                                    if hit.ref_off < seed.rdoff {
+                                        continue;
+                                    }
+                                    pass_cands.push(JointCandidate {
+                                        mate: *mate,
+                                        cand: PrioritizedCandidate {
+                                            ref_id: hit.ref_id,
+                                            ref_off: hit.ref_off - seed.rdoff,
+                                            strand: if seed.fw {
+                                                Strand::Forward
+                                            } else {
+                                                Strand::Reverse
+                                            },
+                                            sa_range_size: seed.size(),
+                                            seed_offset: seed.rdoff,
+                                        },
+                                    });
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    rank_and_sample(
+                        idx,
+                        sizes,
+                        DEFAULT_SEED_LEN,
+                        seed_hit_cap,
+                        &mut buf,
+                        &mut cap_fired,
+                        &mut rnd,
+                    );
+                    for c in buf.drain(..) {
+                        pass_cands.push(JointCandidate { mate: *mate, cand: c });
+                    }
+                }
                 if dump_rnd {
                     let name = std::str::from_utf8(r1_name).unwrap_or("?");
                     let mate_id = match mate {
@@ -332,9 +382,6 @@ pub fn align_pair_jointly(
                         mate_id,
                         rnd.last()
                     );
-                }
-                for c in buf.drain(..) {
-                    pass_cands.push(JointCandidate { mate: *mate, cand: c });
                 }
             }
         } else {

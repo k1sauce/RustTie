@@ -815,6 +815,91 @@ pub(crate) fn rank_and_sample(
     }
 }
 
+/// Lazy variant of [`rank_and_sample`]: returns a mixed list of
+/// pre-resolved single candidates (large ranges) and unresolved small
+/// ranges + samplers (caller-driven iteration). PRNG consumption in
+/// Phase 1 (smalls) is deferred to the caller, matching BT2's
+/// `extendSeedsPaired` row-iteration pattern.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rank_and_sample_lazy(
+    idx: &Bt2Index,
+    sizes: &PerMateSeedSizes,
+    seed_len: u32,
+    seed_hit_cap: u32,
+    cap_fired: &mut bool,
+    rnd: &mut crate::bt2_random::RandomSource,
+) -> Vec<LazyCandidate> {
+    use crate::bt2_descent::{
+        LazySampleSlot, SeedHit, SeedRankInput, prioritize_sa_tups_lazy, rank_seed_hits,
+    };
+    let input = SeedRankInput {
+        n_offs: sizes.offsets.len(),
+        fw_sizes: sizes.fw_sizes.clone(),
+        rc_sizes: sizes.rc_sizes.clone(),
+    };
+    let rank_order = rank_seed_hits(&input, rnd);
+    let mut seeds: Vec<SeedHit> = Vec::with_capacity(rank_order.len());
+    for (offset_idx, fw) in rank_order {
+        let (lo, hi) = if fw {
+            sizes.fw_ranges[offset_idx].unwrap()
+        } else {
+            sizes.rc_ranges[offset_idx].unwrap()
+        };
+        seeds.push(SeedHit {
+            sa_lo: lo,
+            sa_hi: hi,
+            rdoff: sizes.offsets[offset_idx],
+            seedlen: seed_len,
+            fw,
+            nlex: 0,
+            nrex: 0,
+        });
+    }
+    let maxelt = (seed_hit_cap as usize) * seeds.len().max(1);
+    let slots = prioritize_sa_tups_lazy(seeds, 5, true, true, maxelt, rnd);
+    let mut out: Vec<LazyCandidate> = Vec::with_capacity(slots.len());
+    for slot in slots {
+        match slot {
+            LazySampleSlot::Single(row) => {
+                if row.sa_range_size > seed_hit_cap.saturating_mul(8) {
+                    *cap_fired = true;
+                    break;
+                }
+                let pos = resolve_text_pos(idx, row.sa_row);
+                let hit = joined_to_ref(idx, pos);
+                if hit.ref_off < row.rdoff {
+                    continue;
+                }
+                out.push(LazyCandidate::Single(PrioritizedCandidate {
+                    ref_id: hit.ref_id,
+                    ref_off: hit.ref_off - row.rdoff,
+                    strand: if row.fw { Strand::Forward } else { Strand::Reverse },
+                    sa_range_size: row.sa_range_size,
+                    seed_offset: row.rdoff,
+                }));
+            }
+            LazySampleSlot::Range { seed, sampler } => {
+                out.push(LazyCandidate::Range { seed, sampler });
+            }
+        }
+    }
+    out
+}
+
+/// Mate-tagged lazy slot, produced by [`rank_and_sample_lazy`] and
+/// consumed by [`align_pair_jointly`]'s rank-aware path. The caller
+/// advances the `Range`-variant sampler with the shared per-read
+/// `RandomSource` once per anchor extension, byte-matching BT2's
+/// `extendSeedsPaired` row-iteration PRNG sequence.
+#[derive(Debug, Clone)]
+pub enum LazyCandidate {
+    Single(PrioritizedCandidate),
+    Range {
+        seed: crate::bt2_descent::SeedHit,
+        sampler: crate::bt2_random::Random1toN,
+    },
+}
+
 /// BT2-faithful per-mate candidate collection that uses
 /// [`crate::bt2_descent::rank_seed_hits`] to interleave forward and
 /// revcomp seeds in BT2's exact PRNG-driven order before sampling rows.

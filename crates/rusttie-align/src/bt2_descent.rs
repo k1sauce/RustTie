@@ -193,6 +193,27 @@ pub struct PrioritizedRow {
     pub sa_range_size: u32,
 }
 
+/// Lazy version of [`PrioritizedRow`] for BT2-faithful PRNG consumption:
+/// caller iterates per-anchor and advances the [`Random1toN`] sampler
+/// inline. Matches BT2's `extendSeedsPaired` row-picking pattern
+/// (`aligner_sw_driver.cpp:1859` — `rands_[i].next(rnd)` per anchor).
+#[derive(Debug, Clone)]
+pub enum LazySampleSlot {
+    /// Pre-picked single row from a non-small range (BT2 Phase 2 of
+    /// `prioritizeSATupsRands`).
+    Single(PrioritizedRow),
+    /// Small range — caller iterates rows via [`Random1toN::next`] per
+    /// anchor extension. Matches BT2's `rands_[i]` for smalls.
+    Range {
+        seed: SeedHit,
+        /// Pre-initialized but un-consumed sampler. The caller is
+        /// responsible for advancing this with the per-read
+        /// `RandomSource` and stopping when budget/streak conditions
+        /// trip.
+        sampler: Random1toN,
+    },
+}
+
 /// Port of BT2's `prioritizeSATupsRands` (`aligner_sw_driver.cpp:492-738`).
 /// Returns a list of rows to process in BT2-equivalent order: all rows
 /// from "small" ranges first (in sorted-by-size order), then weighted
@@ -326,6 +347,96 @@ pub fn prioritize_sa_tups_rands(
             fw: seed.fw,
             sa_range_size: seed.size(),
         });
+    }
+
+    out
+}
+
+/// BT2-faithful lazy version of [`prioritize_sa_tups_rands`]. Returns
+/// a mixed list of [`LazySampleSlot::Single`] (pre-picked rows from
+/// non-small ranges, BT2 Phase 2) and [`LazySampleSlot::Range`]
+/// (smalls deferred to caller-side iteration, BT2 Phase 1 setup-only).
+///
+/// PRNG consumption:
+/// * Phase 1 (smalls): zero, deferred to caller.
+/// * Phase 2 (larges): `RowSampler::next(rnd)` + `Random1toN::next(rnd)`
+///   per element emitted, matching BT2 exactly.
+pub fn prioritize_sa_tups_lazy(
+    seeds: Vec<SeedHit>,
+    nsm: u32,
+    lensq: bool,
+    szsq: bool,
+    maxelt: usize,
+    rnd: &mut RandomSource,
+) -> Vec<LazySampleSlot> {
+    let mut out: Vec<LazySampleSlot> = Vec::new();
+    if seeds.is_empty() || maxelt == 0 {
+        return out;
+    }
+
+    // Stable size-only sort. BT2's `satpos.sort()` does the same; no
+    // PRNG consumed at sort time (`aligner_sw_driver.cpp:612`).
+    let mut sorted: Vec<SeedHit> = seeds;
+    sorted.sort_by_key(|s| s.size());
+
+    let nsmall = sorted.iter().take_while(|s| s.size() <= nsm).count();
+    let mut elts_added: usize = 0;
+
+    // Phase 1 — smalls: emit setup only, NO PRNG consumption. Each
+    // small range accounts for its full size in `elts_added` (matches
+    // BT2's `nelt_added += satpos_.back().sat.size()` at line 674).
+    for seed in sorted.iter().take(nsmall) {
+        if elts_added >= maxelt {
+            return out;
+        }
+        let sz = seed.size() as usize;
+        let sampler = Random1toN::new(sz);
+        out.push(LazySampleSlot::Range {
+            seed: seed.clone(),
+            sampler,
+        });
+        elts_added += sz;
+    }
+    if elts_added >= maxelt || nsmall == sorted.len() {
+        return out;
+    }
+
+    // Phase 2 — larges: RowSampler.next + Random1toN.next per emitted
+    // element. Matches BT2's `prioritizeSATupsRands` lines 693-735.
+    let large_bins: Vec<(usize, usize)> = sorted
+        .iter()
+        .skip(nsmall)
+        .map(|s| (s.extended_len() as usize, s.size() as usize))
+        .collect();
+    let mut row_samp = RowSampler::new(large_bins, lensq, szsq);
+    let mut row_choosers: Vec<Option<Random1toN>> = vec![None; sorted.len() - nsmall];
+
+    while elts_added < maxelt {
+        if row_samp.total_mass() <= 0.0 {
+            break;
+        }
+        let bin = row_samp.next(rnd);
+        if bin == usize::MAX {
+            break;
+        }
+        if row_choosers[bin].is_none() {
+            row_choosers[bin] = Some(Random1toN::new(sorted[nsmall + bin].size() as usize));
+        }
+        let chooser = row_choosers[bin].as_mut().unwrap();
+        debug_assert!(!chooser.done());
+        let r = chooser.next(rnd);
+        if chooser.done() {
+            row_samp.finished_range(bin);
+        }
+        let seed = &sorted[nsmall + bin];
+        out.push(LazySampleSlot::Single(PrioritizedRow {
+            sa_row: seed.sa_lo + r as u32,
+            rdoff: seed.rdoff,
+            seedlen: seed.seedlen,
+            fw: seed.fw,
+            sa_range_size: seed.size(),
+        }));
+        elts_added += 1;
     }
 
     out
